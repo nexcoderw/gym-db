@@ -8,5 +8,115 @@ datasource db {
   provider = "postgresql"
 }
 
-// Business models are intentionally absent from the foundation release. Add them only through
-// reviewed schema changes and generated migrations owned by this repository.
+enum UserStatus {
+  PENDING   @map("pending")
+  ACTIVE    @map("active")
+  SUSPENDED @map("suspended")
+
+  @@map("user_status")
+}
+
+enum PlatformStaffStatus {
+  PENDING   @map("pending")
+  ACTIVE    @map("active")
+  SUSPENDED @map("suspended")
+  REVOKED   @map("revoked")
+
+  @@map("platform_staff_status")
+}
+
+/// Global login identity. An account has no platform privileges without an active PlatformStaff
+/// record and permissions obtained through explicit role assignments.
+model User {
+  id                 String              @id @default(uuid()) @db.Uuid
+  email              String              @unique(map: "users_email_key") @db.Citext
+  displayName        String              @map("display_name") @db.VarChar(160)
+  status             UserStatus          @default(PENDING)
+  emailVerifiedAt    DateTime?           @map("email_verified_at") @db.Timestamptz(6)
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  passwordCredential PasswordCredential?
+  platformStaff      PlatformStaff?
+
+  @@index([status], map: "users_status_idx")
+  @@map("users")
+}
+
+/// Password material is deliberately separated from public identity data. Values must be hashes
+/// produced by an approved application-layer password hashing algorithm, never plaintext.
+model PasswordCredential {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @unique(map: "password_credentials_user_id_key") @map("user_id") @db.Uuid
+  passwordHash      String   @map("password_hash") @db.VarChar(255)
+  passwordChangedAt DateTime @default(now()) @map("password_changed_at") @db.Timestamptz(6)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user              User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("password_credentials")
+}
+
+/// Explicit eligibility for NEXCODE platform administration. Active status alone grants nothing;
+/// authorization also requires effective permissions assigned through PlatformRole.
+model PlatformStaff {
+  id          String              @id @default(uuid()) @db.Uuid
+  userId      String              @unique(map: "platform_staff_user_id_key") @map("user_id") @db.Uuid
+  status      PlatformStaffStatus
+  suspendedAt DateTime?           @map("suspended_at") @db.Timestamptz(6)
+  createdAt   DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user        User                @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  roles       PlatformStaffRole[]
+
+  @@index([status], map: "platform_staff_status_idx")
+  @@map("platform_staff")
+}
+
+model PlatformRole {
+  id          String                   @id @default(uuid()) @db.Uuid
+  key         String                   @unique(map: "platform_roles_key_key") @db.Citext
+  name        String                   @db.VarChar(120)
+  description String                   @db.VarChar(500)
+  isSystem    Boolean                  @default(false) @map("is_system")
+  createdAt   DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  staff       PlatformStaffRole[]
+  permissions PlatformRolePermission[]
+
+  @@map("platform_roles")
+}
+
+model PlatformPermission {
+  id          String                   @id @default(uuid()) @db.Uuid
+  key         String                   @unique(map: "platform_permissions_key_key") @db.Citext
+  description String                   @db.VarChar(500)
+  createdAt   DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
+  roles       PlatformRolePermission[]
+
+  @@map("platform_permissions")
+}
+
+model PlatformStaffRole {
+  platformStaffId String        @map("platform_staff_id") @db.Uuid
+  platformRoleId  String        @map("platform_role_id") @db.Uuid
+  assignedAt      DateTime      @default(now()) @map("assigned_at") @db.Timestamptz(6)
+  platformStaff   PlatformStaff @relation(fields: [platformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  platformRole    PlatformRole  @relation(fields: [platformRoleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([platformStaffId, platformRoleId], map: "platform_staff_roles_pkey")
+  @@index([platformRoleId], map: "platform_staff_roles_role_id_idx")
+  @@map("platform_staff_roles")
+}
+
+model PlatformRolePermission {
+  platformRoleId       String             @map("platform_role_id") @db.Uuid
+  platformPermissionId String             @map("platform_permission_id") @db.Uuid
+  grantedAt            DateTime           @default(now()) @map("granted_at") @db.Timestamptz(6)
+  platformRole         PlatformRole       @relation(fields: [platformRoleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  platformPermission   PlatformPermission @relation(fields: [platformPermissionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([platformRoleId, platformPermissionId], map: "platform_role_permissions_pkey")
+  @@index([platformPermissionId], map: "platform_role_permissions_permission_id_idx")
+  @@map("platform_role_permissions")
+}
