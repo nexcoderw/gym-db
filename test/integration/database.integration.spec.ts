@@ -5,6 +5,10 @@ import { DatabaseModule } from '../../src/database/database.module.js';
 import { PrismaService } from '../../src/database/prisma.service.js';
 import { TenantTransactionService } from '../../src/database/tenant-transaction.service.js';
 import type { Prisma } from '../../src/generated/prisma/client.js';
+import {
+	loadTestDatabaseSafetyConfig,
+	verifyTestDatabaseSafety,
+} from './test-database-safety.js';
 
 interface TenantSettings {
 	readonly organizationId: string | null;
@@ -20,25 +24,6 @@ const TRANSACTION_MAX_WAIT_MILLISECONDS = 10_000;
 const TRANSACTION_TIMEOUT_MILLISECONDS = 15_000;
 
 jest.setTimeout(30_000);
-
-function requireTestDatabaseUrl(): string {
-	const value = process.env.TEST_DATABASE_URL?.trim();
-	if (value === undefined || value === '') {
-		throw new Error(
-			'TEST_DATABASE_URL is required for database integration tests. ' +
-				'Provide a disposable, migrated PostgreSQL database; production databases are forbidden.',
-		);
-	}
-
-	const runtimeDatabaseUrl = process.env.DATABASE_URL?.trim();
-	if (runtimeDatabaseUrl !== undefined && value === runtimeDatabaseUrl) {
-		throw new Error(
-			'TEST_DATABASE_URL must not match DATABASE_URL. Use a separate disposable test database.',
-		);
-	}
-
-	return value;
-}
 
 function createRendezvous(participantCount: number): () => Promise<void> {
 	let arrivals = 0;
@@ -89,7 +74,7 @@ async function readEveryPooledConnection(prisma: PrismaService): Promise<TenantS
 	return Promise.all([readConnection(), readConnection()]);
 }
 
-const testDatabaseUrl = requireTestDatabaseUrl();
+const testDatabaseSafety = loadTestDatabaseSafetyConfig();
 
 describe('database integration', () => {
 	let module: TestingModule;
@@ -100,7 +85,7 @@ describe('database integration', () => {
 		module = await Test.createTestingModule({
 			imports: [
 				DatabaseModule.forRoot({
-					databaseUrl: testDatabaseUrl,
+					databaseUrl: testDatabaseSafety.databaseUrl,
 					poolMax: POOL_SIZE,
 					connectionTimeoutMilliseconds: 5_000,
 				}),
@@ -108,6 +93,7 @@ describe('database integration', () => {
 		}).compile();
 		await module.init();
 		prisma = module.get(PrismaService);
+		await verifyTestDatabaseSafety(prisma, testDatabaseSafety);
 		tenantTransactions = module.get(TenantTransactionService);
 	});
 
