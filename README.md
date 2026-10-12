@@ -15,6 +15,8 @@ It is a package consumed by `gym-api`; it is not a public server and contains no
   fail-closed PostgreSQL RLS policies. Prisma does not provide tenant isolation on its own.
 - Global users remain separate from NEXCODE platform-staff assignments and explicit platform RBAC.
   Creating an account grants no platform access.
+- Platform administration authentication uses dedicated server-session, TOTP, recovery-code, and
+  pre-authentication challenge records that are never tenant scoped.
 - `src/index.ts` is the sole supported public entry point.
 
 Essential package guidance lives in this README; agent-only engineering rules live in `.agents/`.
@@ -107,6 +109,32 @@ Do not build the full gym model speculatively. Each change follows this order:
 
 Never use `prisma db push` in production or edit a migration already applied. Follow the approved
 deployment and incident procedures maintained outside this repository.
+
+## Platform authentication persistence
+
+`PlatformAdminSession` stores only unique session-token digests and requires an MFA verification
+timestamp. Absolute and idle expiration timestamps plus per-session revocation support bounded
+server-side sessions and revoking every session for one platform administrator.
+
+`PlatformTotpCredential` stores authenticated-encryption ciphertext, key identifier, format version,
+initialization vector, and authentication tag. Encryption keys never belong in PostgreSQL. Enrollment
+is incomplete until `verifiedAt` is set, and the future API must atomically advance
+`lastAcceptedTimeStep` to prevent replay. Factor replacement or disabling requires recent
+reauthentication, authorization, and a privileged audit event.
+
+`PlatformRecoveryCode` stores only unique digests. The future API generates high-entropy codes,
+reveals them only during enrollment or regeneration, consumes them with an atomic conditional update,
+and revokes the previous set when issuing replacements. `PlatformMfaChallenge` stores only a digest
+and bounded, short-lived attempt state; it never grants platform access or substitutes for a session.
+
+The API owns cryptographically secure token generation, digest construction, versioned authenticated
+encryption, TOTP verification, cookie security, CSRF protection, reauthentication, cleanup, key
+rotation, retention, and audit workflows. Login or an MFA challenge alone grants nothing. Every
+administrative request must verify the user and platform-staff records are active, password and MFA
+requirements were satisfied, the session is neither expired nor revoked, and effective platform
+permissions allow the operation. Tenant context must never authorize access to these global records.
+Production database privileges and service-level authorization must restrict these sensitive models
+to the platform authentication service even though the generated Prisma client exposes them.
 
 ## Versioning and publication
 
