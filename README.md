@@ -17,10 +17,8 @@ It is a package consumed by `gym-api`; it is not a public server and contains no
   Creating an account grants no platform access.
 - `src/index.ts` is the sole supported public entry point.
 
-See [package architecture](docs/architecture/package-architecture.md),
-[database conventions](docs/database/schema-conventions.md),
-[platform administrator identity](docs/database/platform-admin-identity.md), the
-[secure integration-test runbook](docs/runbooks/integration-tests.md), and the [ADRs](docs/adr/).
+Maintainer-only architecture decisions and operational runbooks are kept locally under the ignored
+`docs/` directory.
 
 ## Responsibilities
 
@@ -108,8 +106,8 @@ Do not build the full gym model speculatively. Each change follows this order:
 5. Publish a compatible package and update `gym-api` to that exact version.
 6. Contract only in a later release after old readers/writers are gone.
 
-Never use `prisma db push` in production or edit a migration already applied. Full procedures are in
-[migration runbook](docs/runbooks/migrations.md) and [recovery runbook](docs/runbooks/recovery.md).
+Never use `prisma db push` in production or edit a migration already applied. Follow the locally
+maintained migration and recovery runbooks for deployment and incident procedures.
 
 ## Versioning and publication
 
@@ -120,8 +118,8 @@ immutable.
 
 GitHub Packages publication requires an npm token with `write:packages` (and repository access when
 private). Consumers need `read:packages`. Use `npm login --scope=@nexcoderw --auth-type=legacy
---registry=https://npm.pkg.github.com`, never a committed token. See
-[release runbook](docs/runbooks/releases.md).
+--registry=https://npm.pkg.github.com`, never a committed token. Follow the locally maintained release
+runbook.
 
 ## Testing and security
 
@@ -134,12 +132,12 @@ same database. Fixture cleanup is limited to identifiers reserved by the current
 unrelated rows. The suite verifies transaction-local context, success and rollback cleanup, sequential
 tenant replacement, concurrent tenant separation, platform identity uniqueness, restrictive
 relationships, explicit RBAC assignments, suspension/revocation states, and rollback. Future tenant
-models must add cross-tenant denial tests under RLS. Follow the
-[secure integration-test runbook](docs/runbooks/integration-tests.md) before running the suite.
+models must add cross-tenant denial tests under RLS. Follow the locally maintained secure
+integration-test runbook before running the suite.
 
 Use distinct least-privilege runtime and migration roles, TLS outside trusted local development,
 parameterized SQL, and synthetic examples (for example fictional Soho Gym branches in Kimihurura and
-Remera). See [tenant isolation](docs/database/tenant-isolation.md).
+Remera). Follow the locally maintained tenant-isolation guidance.
 
 ## Troubleshooting
 
@@ -150,8 +148,8 @@ Remera). See [tenant isolation](docs/database/tenant-isolation.md).
 - **Migration deploy reports no migrations:** run the reviewed create-only workflow first; do not deploy
   until the generated SQL has been inspected and approved.
 - **Integration suite requires configuration:** provision the marker and restricted role described in
-  the [integration-test runbook](docs/runbooks/integration-tests.md), then apply reviewed migrations.
-  Missing, privileged, reused, or unverified configurations fail before test writes.
+  the local integration-test runbook, then apply reviewed migrations. Missing, privileged, reused, or
+  unverified configurations fail before test writes.
 - **Process does not disconnect:** verify the API enabled Nest shutdown hooks.
 - **GitHub Packages returns 401/403:** confirm scope registry, token scopes, SSO/repository access, and
   that the token is supplied through the user npm configuration rather than this repository.
