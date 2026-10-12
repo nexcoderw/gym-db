@@ -51,9 +51,7 @@ function createRendezvous(participantCount: number): () => Promise<void> {
 	};
 }
 
-async function readTenantSettings(
-	transaction: Prisma.TransactionClient,
-): Promise<TenantSettings> {
+async function readTenantSettings(transaction: Prisma.TransactionClient): Promise<TenantSettings> {
 	const rows = await transaction.$queryRaw<
 		{ organization_id: string | null; branch_id: string | null }[]
 	>`
@@ -126,9 +124,8 @@ describe('database integration', () => {
 	});
 
 	it('clears tenant context from pooled connections after successful completion', async () => {
-		await tenantTransactions.run(
-			{ organizationId: ORGANIZATION_A_ID, branchId: BRANCH_A_ID },
-			() => Promise.resolve(undefined),
+		await tenantTransactions.run({ organizationId: ORGANIZATION_A_ID, branchId: BRANCH_A_ID }, () =>
+			Promise.resolve(undefined),
 		);
 
 		await expect(readEveryPooledConnection(prisma)).resolves.toEqual([
@@ -168,10 +165,7 @@ describe('database integration', () => {
 
 	it('keeps simultaneous tenant transactions isolated', async () => {
 		const rendezvous = createRendezvous(POOL_SIZE);
-		const runTenant = (
-			organizationId: string,
-			branchId: string,
-		): Promise<TenantSettings> =>
+		const runTenant = (organizationId: string, branchId: string): Promise<TenantSettings> =>
 			tenantTransactions.run({ organizationId, branchId }, async (transaction) => {
 				await rendezvous();
 				return readTenantSettings(transaction);
