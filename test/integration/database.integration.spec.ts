@@ -3,26 +3,103 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { DatabaseModule } from '../../src/database/database.module.js';
 import { PrismaService } from '../../src/database/prisma.service.js';
 import { TenantTransactionService } from '../../src/database/tenant-transaction.service.js';
+import type { Prisma } from '../../src/generated/prisma/client.js';
 
-const testDatabaseUrl = process.env.TEST_DATABASE_URL;
-const describeWithDatabase = testDatabaseUrl === undefined ? describe.skip : describe;
+interface TenantSettings {
+	readonly organizationId: string | null;
+	readonly branchId: string | null;
+}
 
-describeWithDatabase('database integration', () => {
+const ORGANIZATION_A_ID = '11111111-1111-4111-8111-111111111111';
+const ORGANIZATION_B_ID = '22222222-2222-4222-8222-222222222222';
+const BRANCH_A_ID = '33333333-3333-4333-8333-333333333333';
+const BRANCH_B_ID = '44444444-4444-4444-8444-444444444444';
+const POOL_SIZE = 2;
+
+function requireTestDatabaseUrl(): string {
+	const value = process.env.TEST_DATABASE_URL?.trim();
+	if (value === undefined || value === '') {
+		throw new Error(
+			'TEST_DATABASE_URL is required for database integration tests. ' +
+				'Provide a disposable, migrated PostgreSQL database; production databases are forbidden.',
+		);
+	}
+
+	const runtimeDatabaseUrl = process.env.DATABASE_URL?.trim();
+	if (runtimeDatabaseUrl !== undefined && value === runtimeDatabaseUrl) {
+		throw new Error(
+			'TEST_DATABASE_URL must not match DATABASE_URL. Use a separate disposable test database.',
+		);
+	}
+
+	return value;
+}
+
+function createRendezvous(participantCount: number): () => Promise<void> {
+	let arrivals = 0;
+	let release: (() => void) | undefined;
+	const allArrived = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+
+	return async () => {
+		arrivals += 1;
+		if (arrivals === participantCount) {
+			release?.();
+		}
+		await allArrived;
+	};
+}
+
+async function readTenantSettings(
+	transaction: Prisma.TransactionClient,
+): Promise<TenantSettings> {
+	const rows = await transaction.$queryRaw<
+		{ organization_id: string | null; branch_id: string | null }[]
+	>`
+		SELECT
+			NULLIF(current_setting('app.current_organization_id', true), '') AS organization_id,
+			NULLIF(current_setting('app.current_branch_id', true), '') AS branch_id
+	`;
+	const row = rows[0];
+	if (row === undefined) {
+		throw new Error('PostgreSQL did not return tenant settings.');
+	}
+
+	return { organizationId: row.organization_id, branchId: row.branch_id };
+}
+
+async function readEveryPooledConnection(prisma: PrismaService): Promise<TenantSettings[]> {
+	const rendezvous = createRendezvous(POOL_SIZE);
+	const readConnection = (): Promise<TenantSettings> =>
+		prisma.$transaction(async (transaction) => {
+			await rendezvous();
+			return readTenantSettings(transaction);
+		});
+
+	return Promise.all([readConnection(), readConnection()]);
+}
+
+const testDatabaseUrl = requireTestDatabaseUrl();
+
+describe('database integration', () => {
 	let module: TestingModule;
 	let prisma: PrismaService;
+	let tenantTransactions: TenantTransactionService;
 
 	beforeAll(async () => {
 		module = await Test.createTestingModule({
 			imports: [
 				DatabaseModule.forRoot({
-					databaseUrl: testDatabaseUrl ?? '',
-					poolMax: 2,
+					databaseUrl: testDatabaseUrl,
+					poolMax: POOL_SIZE,
 					connectionTimeoutMilliseconds: 5_000,
 				}),
 			],
 		}).compile();
 		await module.init();
 		prisma = module.get(PrismaService);
+		tenantTransactions = module.get(TenantTransactionService);
 	});
 
 	afterAll(async () => {
@@ -33,21 +110,81 @@ describeWithDatabase('database integration', () => {
 		await expect(prisma.$queryRaw`SELECT 1`).resolves.toEqual([{ '?column?': 1 }]);
 	});
 
-	it('keeps tenant settings local to their transaction', async () => {
-		const tenantTransactions = module.get(TenantTransactionService);
-		const organizationId = '11111111-1111-4111-8111-111111111111';
+	it('makes organization context available inside its transaction', async () => {
+		await expect(
+			tenantTransactions.run({ organizationId: ORGANIZATION_A_ID }, readTenantSettings),
+		).resolves.toEqual({ organizationId: ORGANIZATION_A_ID, branchId: null });
+	});
+
+	it('makes branch context available inside its transaction', async () => {
+		await expect(
+			tenantTransactions.run(
+				{ organizationId: ORGANIZATION_A_ID, branchId: BRANCH_A_ID },
+				readTenantSettings,
+			),
+		).resolves.toEqual({ organizationId: ORGANIZATION_A_ID, branchId: BRANCH_A_ID });
+	});
+
+	it('clears tenant context from pooled connections after successful completion', async () => {
+		await tenantTransactions.run(
+			{ organizationId: ORGANIZATION_A_ID, branchId: BRANCH_A_ID },
+			() => Promise.resolve(undefined),
+		);
+
+		await expect(readEveryPooledConnection(prisma)).resolves.toEqual([
+			{ organizationId: null, branchId: null },
+			{ organizationId: null, branchId: null },
+		]);
+	});
+
+	it('clears tenant context from pooled connections after rollback', async () => {
+		const rollbackError = new Error('intentional integration-test rollback');
 
 		await expect(
-			tenantTransactions.run({ organizationId }, async (transaction) => {
-				return transaction.$queryRaw<{ organization_id: string }[]>`
-					SELECT current_setting('app.current_organization_id', true) AS organization_id
-				`;
-			}),
-		).resolves.toEqual([{ organization_id: organizationId }]);
+			tenantTransactions.run(
+				{ organizationId: ORGANIZATION_A_ID, branchId: BRANCH_A_ID },
+				async (transaction) => {
+					await expect(readTenantSettings(transaction)).resolves.toEqual({
+						organizationId: ORGANIZATION_A_ID,
+						branchId: BRANCH_A_ID,
+					});
+					throw rollbackError;
+				},
+			),
+		).rejects.toBe(rollbackError);
+		await expect(readEveryPooledConnection(prisma)).resolves.toEqual([
+			{ organizationId: null, branchId: null },
+			{ organizationId: null, branchId: null },
+		]);
+	});
 
-		const outsideTransaction = await prisma.$queryRaw<{ organization_id: string | null }[]>`
-				SELECT current_setting('app.current_organization_id', true) AS organization_id
-			`;
-		expect(outsideTransaction[0]?.organization_id).not.toBe(organizationId);
+	it('replaces a previous organization context in a later transaction', async () => {
+		await tenantTransactions.run({ organizationId: ORGANIZATION_A_ID }, readTenantSettings);
+
+		await expect(
+			tenantTransactions.run({ organizationId: ORGANIZATION_B_ID }, readTenantSettings),
+		).resolves.toEqual({ organizationId: ORGANIZATION_B_ID, branchId: null });
+	});
+
+	it('keeps simultaneous tenant transactions isolated', async () => {
+		const rendezvous = createRendezvous(POOL_SIZE);
+		const runTenant = (
+			organizationId: string,
+			branchId: string,
+		): Promise<TenantSettings> =>
+			tenantTransactions.run({ organizationId, branchId }, async (transaction) => {
+				await rendezvous();
+				return readTenantSettings(transaction);
+			});
+
+		await expect(
+			Promise.all([
+				runTenant(ORGANIZATION_A_ID, BRANCH_A_ID),
+				runTenant(ORGANIZATION_B_ID, BRANCH_B_ID),
+			]),
+		).resolves.toEqual([
+			{ organizationId: ORGANIZATION_A_ID, branchId: BRANCH_A_ID },
+			{ organizationId: ORGANIZATION_B_ID, branchId: BRANCH_B_ID },
+		]);
 	});
 });
