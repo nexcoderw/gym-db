@@ -116,9 +116,12 @@ private). Consumers need `read:packages`. Use `npm login --scope=@nexcoderw --au
 
 ## Testing and security
 
-Unit tests cover configuration, module exports, and tenant transaction behavior. Integration tests
-connect only when `TEST_DATABASE_URL` is present and verify lifecycle and transaction-local context.
-Future models must add real PostgreSQL constraint, transaction rollback, and cross-tenant denial tests.
+Unit tests cover configuration, module exports, tenant validation, parameterized context setup, and
+fail-before-callback behavior. Integration tests require a disposable `TEST_DATABASE_URL` and verify
+transaction-local context, success and rollback cleanup, sequential tenant replacement, and concurrent
+tenant separation. The suite fails with an explicit configuration error when `TEST_DATABASE_URL` is
+missing or matches `DATABASE_URL`; it never silently skips database verification. Future models must
+add real PostgreSQL constraint and cross-tenant denial tests under RLS.
 
 Use distinct least-privilege runtime and migration roles, TLS outside trusted local development,
 parameterized SQL, and synthetic examples (for example fictional Soho Gym branches in Kimihurura and
@@ -128,7 +131,8 @@ Remera). See [tenant isolation](docs/database/tenant-isolation.md).
 
 - **Generated client import missing:** run `npm run prisma:generate` after installing dependencies.
 - **CLI uses a pooler:** set `DIRECT_DATABASE_URL` to a direct migration connection.
-- **Integration suite skipped:** provide a disposable `TEST_DATABASE_URL` and apply migrations first.
+- **Integration suite requires configuration:** provide a disposable `TEST_DATABASE_URL` distinct from
+  `DATABASE_URL` and apply migrations first. Missing or reused configuration fails the suite.
 - **Process does not disconnect:** verify the API enabled Nest shutdown hooks.
 - **GitHub Packages returns 401/403:** confirm scope registry, token scopes, SSO/repository access, and
   that the token is supplied through the user npm configuration rather than this repository.
