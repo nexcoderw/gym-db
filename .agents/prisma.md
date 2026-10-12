@@ -18,7 +18,7 @@ implicit cascading, or runtime migration execution.
 
 ## Correct example
 
-`transaction.$executeRaw\`SELECT set_config('app.current_organization_id', ${id}, true)\`` keeps the
+`transaction.$queryRaw\`SELECT set_config('app.current_organization_id', ${id}, true)\`` keeps the
 value parameterized and transaction-local.
 
 ## Common mistakes
