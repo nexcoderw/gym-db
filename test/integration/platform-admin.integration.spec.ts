@@ -1,53 +1,33 @@
+import { randomUUID } from 'node:crypto';
+
 import { jest } from '@jest/globals';
 import { Test, type TestingModule } from '@nestjs/testing';
 
 import { DatabaseModule } from '../../src/database/database.module.js';
 import { PrismaService } from '../../src/database/prisma.service.js';
 import { PlatformStaffStatus, UserStatus } from '../../src/generated/prisma/client.js';
+import { PlatformAdminTestFixtures } from './platform-admin-test-fixtures.js';
+import {
+	loadTestDatabaseSafetyConfig,
+	verifyTestDatabaseSafety,
+	type VerifiedTestDatabase,
+} from './test-database-safety.js';
 
 const FICTIONAL_PASSWORD_HASH = 'argon2id-test-hash-not-a-real-credential';
 const UNKNOWN_USER_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const UNKNOWN_ROLE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const TRANSACTION_MAX_WAIT_MILLISECONDS = 10_000;
 const TRANSACTION_TIMEOUT_MILLISECONDS = 15_000;
+const TEST_RUN_ID = randomUUID().replaceAll('-', '');
 
 jest.setTimeout(30_000);
 
-function requireTestDatabaseUrl(): string {
-	const value = process.env.TEST_DATABASE_URL?.trim();
-	if (value === undefined || value === '') {
-		throw new Error(
-			'TEST_DATABASE_URL is required for platform authorization integration tests. ' +
-				'Provide a disposable, migrated PostgreSQL database; production databases are forbidden.',
-		);
-	}
-
-	const runtimeDatabaseUrl = process.env.DATABASE_URL?.trim();
-	if (runtimeDatabaseUrl !== undefined && value === runtimeDatabaseUrl) {
-		throw new Error(
-			'TEST_DATABASE_URL must not match DATABASE_URL. Use a separate disposable test database.',
-		);
-	}
-
-	return value;
+function fixtureEmail(localPart: string): string {
+	return `${localPart}.${TEST_RUN_ID}@example.com`;
 }
 
-async function clearPlatformData(prisma: PrismaService): Promise<void> {
-	await prisma.$transaction(
-		async (transaction) => {
-			await transaction.platformRolePermission.deleteMany();
-			await transaction.platformStaffRole.deleteMany();
-			await transaction.passwordCredential.deleteMany();
-			await transaction.platformPermission.deleteMany();
-			await transaction.platformRole.deleteMany();
-			await transaction.platformStaff.deleteMany();
-			await transaction.user.deleteMany();
-		},
-		{
-			maxWait: TRANSACTION_MAX_WAIT_MILLISECONDS,
-			timeout: TRANSACTION_TIMEOUT_MILLISECONDS,
-		},
-	);
+function fixtureKey(key: string): string {
+	return `${key}.${TEST_RUN_ID}`;
 }
 
 async function expectConstraintViolation(
@@ -57,17 +37,20 @@ async function expectConstraintViolation(
 	await expect(operation).rejects.toMatchObject({ code });
 }
 
-const testDatabaseUrl = requireTestDatabaseUrl();
+const testDatabaseSafety = loadTestDatabaseSafetyConfig();
 
 describe('platform administrator database foundation', () => {
 	let module: TestingModule;
 	let prisma: PrismaService;
+	let verifiedDatabase: VerifiedTestDatabase | undefined;
+	let fixtures = new PlatformAdminTestFixtures();
+	const additionalFixtures: PlatformAdminTestFixtures[] = [];
 
 	beforeAll(async () => {
 		module = await Test.createTestingModule({
 			imports: [
 				DatabaseModule.forRoot({
-					databaseUrl: testDatabaseUrl,
+					databaseUrl: testDatabaseSafety.databaseUrl,
 					poolMax: 2,
 					connectionTimeoutMilliseconds: 10_000,
 				}),
@@ -75,37 +58,75 @@ describe('platform administrator database foundation', () => {
 		}).compile();
 		await module.init();
 		prisma = module.get(PrismaService);
+		verifiedDatabase = await verifyTestDatabaseSafety(prisma, testDatabaseSafety);
 	});
 
-	beforeEach(async () => {
-		await clearPlatformData(prisma);
+	beforeEach(() => {
+		fixtures = new PlatformAdminTestFixtures();
+		additionalFixtures.length = 0;
+	});
+
+	afterEach(async () => {
+		if (verifiedDatabase === undefined) {
+			return;
+		}
+
+		for (const fixtureSet of [fixtures, ...additionalFixtures].reverse()) {
+			await fixtureSet.cleanup(prisma, verifiedDatabase);
+		}
 	});
 
 	afterAll(async () => {
-		await clearPlatformData(prisma);
-		await module.close();
+		if (module !== undefined) {
+			await module.close();
+		}
 	});
+
+	function requireVerifiedDatabase(): VerifiedTestDatabase {
+		if (verifiedDatabase === undefined) {
+			throw new Error('The integration-test database safety check has not completed.');
+		}
+
+		return verifiedDatabase;
+	}
 
 	it('creates a pending global user without platform access', async () => {
 		const user = await prisma.user.create({
-			data: { email: 'aline.uwase@example.com', displayName: 'Aline Uwase' },
+			data: {
+				id: fixtures.reserveUserId(),
+				email: fixtureEmail('aline.uwase'),
+				displayName: 'Aline Uwase',
+			},
 			include: { passwordCredential: true, platformStaff: true },
 		});
 
 		expect(user.status).toBe(UserStatus.PENDING);
 		expect(user.passwordCredential).toBeNull();
 		expect(user.platformStaff).toBeNull();
-		expect(await prisma.platformStaffRole.count()).toBe(0);
+		expect(
+			await prisma.platformStaffRole.count({
+				where: { platformStaff: { userId: user.id } },
+			}),
+		).toBe(0);
 	});
 
 	it('rejects email duplicates that differ only by case', async () => {
+		const email = fixtureEmail('claudine.mukamana');
 		await prisma.user.create({
-			data: { email: 'claudine.mukamana@example.com', displayName: 'Claudine Mukamana' },
+			data: {
+				id: fixtures.reserveUserId(),
+				email,
+				displayName: 'Claudine Mukamana',
+			},
 		});
 
 		await expectConstraintViolation(
 			prisma.user.create({
-				data: { email: 'CLAUDINE.MUKAMANA@EXAMPLE.COM', displayName: 'Another Identity' },
+				data: {
+					id: fixtures.reserveUserId(),
+					email: email.toUpperCase(),
+					displayName: 'Another Identity',
+				},
 			}),
 			'P2002',
 		);
@@ -113,15 +134,27 @@ describe('platform administrator database foundation', () => {
 
 	it('allows at most one password credential per user', async () => {
 		const user = await prisma.user.create({
-			data: { email: 'kevin.habimana@example.com', displayName: 'Kevin Habimana' },
+			data: {
+				id: fixtures.reserveUserId(),
+				email: fixtureEmail('kevin.habimana'),
+				displayName: 'Kevin Habimana',
+			},
 		});
 		await prisma.passwordCredential.create({
-			data: { userId: user.id, passwordHash: FICTIONAL_PASSWORD_HASH },
+			data: {
+				id: fixtures.reservePasswordCredentialId(),
+				userId: user.id,
+				passwordHash: FICTIONAL_PASSWORD_HASH,
+			},
 		});
 
 		await expectConstraintViolation(
 			prisma.passwordCredential.create({
-				data: { userId: user.id, passwordHash: FICTIONAL_PASSWORD_HASH },
+				data: {
+					id: fixtures.reservePasswordCredentialId(),
+					userId: user.id,
+					passwordHash: FICTIONAL_PASSWORD_HASH,
+				},
 			}),
 			'P2002',
 		);
@@ -130,7 +163,11 @@ describe('platform administrator database foundation', () => {
 	it('rejects credentials for an unknown user', async () => {
 		await expectConstraintViolation(
 			prisma.passwordCredential.create({
-				data: { userId: UNKNOWN_USER_ID, passwordHash: FICTIONAL_PASSWORD_HASH },
+				data: {
+					id: fixtures.reservePasswordCredentialId(),
+					userId: UNKNOWN_USER_ID,
+					passwordHash: FICTIONAL_PASSWORD_HASH,
+				},
 			}),
 			'P2003',
 		);
@@ -138,24 +175,38 @@ describe('platform administrator database foundation', () => {
 
 	it('allows at most one platform staff assignment per user', async () => {
 		const user = await prisma.user.create({
-			data: { email: 'diane.ingabire@example.com', displayName: 'Diane Ingabire' },
+			data: {
+				id: fixtures.reserveUserId(),
+				email: fixtureEmail('diane.ingabire'),
+				displayName: 'Diane Ingabire',
+			},
 		});
 		await prisma.platformStaff.create({
-			data: { userId: user.id, status: PlatformStaffStatus.PENDING },
+			data: {
+				id: fixtures.reservePlatformStaffId(),
+				userId: user.id,
+				status: PlatformStaffStatus.PENDING,
+			},
 		});
 
 		await expectConstraintViolation(
 			prisma.platformStaff.create({
-				data: { userId: user.id, status: PlatformStaffStatus.ACTIVE },
+				data: {
+					id: fixtures.reservePlatformStaffId(),
+					userId: user.id,
+					status: PlatformStaffStatus.ACTIVE,
+				},
 			}),
 			'P2002',
 		);
 	});
 
 	it('enforces unique platform role keys', async () => {
+		const key = fixtureKey('platform.support');
 		await prisma.platformRole.create({
 			data: {
-				key: 'platform.support',
+				id: fixtures.reservePlatformRoleId(),
+				key,
 				name: 'Platform Support',
 				description: 'Supports fictional NEXCODE platform operations.',
 			},
@@ -164,7 +215,8 @@ describe('platform administrator database foundation', () => {
 		await expectConstraintViolation(
 			prisma.platformRole.create({
 				data: {
-					key: 'PLATFORM.SUPPORT',
+					id: fixtures.reservePlatformRoleId(),
+					key: key.toUpperCase(),
 					name: 'Duplicate Support',
 					description: 'Must not be created.',
 				},
@@ -174,16 +226,22 @@ describe('platform administrator database foundation', () => {
 	});
 
 	it('enforces unique platform permission keys', async () => {
+		const key = fixtureKey('platform.staff.read');
 		await prisma.platformPermission.create({
 			data: {
-				key: 'platform.staff.read',
+				id: fixtures.reservePlatformPermissionId(),
+				key,
 				description: 'Reads platform staff metadata.',
 			},
 		});
 
 		await expectConstraintViolation(
 			prisma.platformPermission.create({
-				data: { key: 'PLATFORM.STAFF.READ', description: 'Must not be created.' },
+				data: {
+					id: fixtures.reservePlatformPermissionId(),
+					key: key.toUpperCase(),
+					description: 'Must not be created.',
+				},
 			}),
 			'P2002',
 		);
@@ -191,14 +249,23 @@ describe('platform administrator database foundation', () => {
 
 	it('rejects duplicate staff role assignments', async () => {
 		const user = await prisma.user.create({
-			data: { email: 'eric.nshimiyimana@example.com', displayName: 'Eric Nshimiyimana' },
+			data: {
+				id: fixtures.reserveUserId(),
+				email: fixtureEmail('eric.nshimiyimana'),
+				displayName: 'Eric Nshimiyimana',
+			},
 		});
 		const staff = await prisma.platformStaff.create({
-			data: { userId: user.id, status: PlatformStaffStatus.ACTIVE },
+			data: {
+				id: fixtures.reservePlatformStaffId(),
+				userId: user.id,
+				status: PlatformStaffStatus.ACTIVE,
+			},
 		});
 		const role = await prisma.platformRole.create({
 			data: {
-				key: 'platform.administrator',
+				id: fixtures.reservePlatformRoleId(),
+				key: fixtureKey('platform.administrator'),
 				name: 'Platform Administrator',
 				description: 'Administers approved NEXCODE platform capabilities.',
 			},
@@ -212,14 +279,16 @@ describe('platform administrator database foundation', () => {
 	it('rejects duplicate role permission mappings', async () => {
 		const role = await prisma.platformRole.create({
 			data: {
-				key: 'platform.billing',
+				id: fixtures.reservePlatformRoleId(),
+				key: fixtureKey('platform.billing'),
 				name: 'Platform Billing',
 				description: 'Manages approved platform billing capabilities.',
 			},
 		});
 		const permission = await prisma.platformPermission.create({
 			data: {
-				key: 'platform.subscriptions.manage',
+				id: fixtures.reservePlatformPermissionId(),
+				key: fixtureKey('platform.subscriptions.manage'),
 				description: 'Manages platform subscription configuration.',
 			},
 		});
@@ -243,17 +312,30 @@ describe('platform administrator database foundation', () => {
 
 	it('restricts deletion of security records that still have dependents', async () => {
 		const user = await prisma.user.create({
-			data: { email: 'fiona.mutesi@example.com', displayName: 'Fiona Mutesi' },
+			data: {
+				id: fixtures.reserveUserId(),
+				email: fixtureEmail('fiona.mutesi'),
+				displayName: 'Fiona Mutesi',
+			},
 		});
 		await prisma.passwordCredential.create({
-			data: { userId: user.id, passwordHash: FICTIONAL_PASSWORD_HASH },
+			data: {
+				id: fixtures.reservePasswordCredentialId(),
+				userId: user.id,
+				passwordHash: FICTIONAL_PASSWORD_HASH,
+			},
 		});
 		const staff = await prisma.platformStaff.create({
-			data: { userId: user.id, status: PlatformStaffStatus.ACTIVE },
+			data: {
+				id: fixtures.reservePlatformStaffId(),
+				userId: user.id,
+				status: PlatformStaffStatus.ACTIVE,
+			},
 		});
 		const role = await prisma.platformRole.create({
 			data: {
-				key: 'platform.owner',
+				id: fixtures.reservePlatformRoleId(),
+				key: fixtureKey('platform.owner'),
 				name: 'Platform Owner',
 				description: 'Reserved for explicitly bootstrapped NEXCODE ownership.',
 				isSystem: true,
@@ -261,7 +343,8 @@ describe('platform administrator database foundation', () => {
 		});
 		const permission = await prisma.platformPermission.create({
 			data: {
-				key: 'platform.audit.read',
+				id: fixtures.reservePlatformPermissionId(),
+				key: fixtureKey('platform.audit.read'),
 				description: 'Reads privileged platform audit records.',
 			},
 		});
@@ -287,17 +370,19 @@ describe('platform administrator database foundation', () => {
 		);
 	});
 
-	it('persists account and platform staff suspension states', async () => {
+	it('persists account suspension and platform staff suspension or revocation states', async () => {
 		const suspendedAt = new Date('2026-10-12T12:00:00.000Z');
 		const user = await prisma.user.create({
 			data: {
-				email: 'grace.umutesi@example.com',
+				id: fixtures.reserveUserId(),
+				email: fixtureEmail('grace.umutesi'),
 				displayName: 'Grace Umutesi',
 				status: UserStatus.SUSPENDED,
 			},
 		});
 		const staff = await prisma.platformStaff.create({
 			data: {
+				id: fixtures.reservePlatformStaffId(),
 				userId: user.id,
 				status: PlatformStaffStatus.SUSPENDED,
 				suspendedAt,
@@ -307,25 +392,52 @@ describe('platform administrator database foundation', () => {
 		expect(user.status).toBe(UserStatus.SUSPENDED);
 		expect(staff.status).toBe(PlatformStaffStatus.SUSPENDED);
 		expect(staff.suspendedAt).toEqual(suspendedAt);
+
+		const revokedUser = await prisma.user.create({
+			data: {
+				id: fixtures.reserveUserId(),
+				email: fixtureEmail('grace.revoked'),
+				displayName: 'Grace Revoked',
+			},
+		});
+		const revokedStaff = await prisma.platformStaff.create({
+			data: {
+				id: fixtures.reservePlatformStaffId(),
+				userId: revokedUser.id,
+				status: PlatformStaffStatus.REVOKED,
+			},
+		});
+
+		expect(revokedStaff.status).toBe(PlatformStaffStatus.REVOKED);
 	});
 
 	it('resolves permissions only through explicit staff role relationships', async () => {
 		const user = await prisma.user.create({
-			data: { email: 'henriette.kayitesi@example.com', displayName: 'Henriette Kayitesi' },
+			data: {
+				id: fixtures.reserveUserId(),
+				email: fixtureEmail('henriette.kayitesi'),
+				displayName: 'Henriette Kayitesi',
+			},
 		});
 		const staff = await prisma.platformStaff.create({
-			data: { userId: user.id, status: PlatformStaffStatus.ACTIVE },
+			data: {
+				id: fixtures.reservePlatformStaffId(),
+				userId: user.id,
+				status: PlatformStaffStatus.ACTIVE,
+			},
 		});
 		const role = await prisma.platformRole.create({
 			data: {
-				key: 'platform.support',
+				id: fixtures.reservePlatformRoleId(),
+				key: fixtureKey('platform.support'),
 				name: 'Platform Support',
 				description: 'Supports approved platform operations.',
 			},
 		});
 		const permission = await prisma.platformPermission.create({
 			data: {
-				key: 'platform.dashboard.read',
+				id: fixtures.reservePlatformPermissionId(),
+				key: fixtureKey('platform.dashboard.read'),
 				description: 'Reads the platform operations dashboard.',
 			},
 		});
@@ -349,27 +461,111 @@ describe('platform administrator database foundation', () => {
 			},
 		});
 
-		expect(authorization?.roles[0]?.platformRole.key).toBe('platform.support');
+		expect(authorization?.roles[0]?.platformRole.key).toBe(fixtureKey('platform.support'));
 		expect(authorization?.roles[0]?.platformRole.permissions[0]?.platformPermission.key).toBe(
-			'platform.dashboard.read',
+			fixtureKey('platform.dashboard.read'),
 		);
+	});
+
+	it('removes only records reserved by the current fixture set', async () => {
+		const unrelatedFixtures = new PlatformAdminTestFixtures();
+		additionalFixtures.push(unrelatedFixtures);
+		const unrelatedUserId = unrelatedFixtures.reserveUserId();
+		const ownedUserId = fixtures.reserveUserId();
+
+		await prisma.user.createMany({
+			data: [
+				{
+					id: unrelatedUserId,
+					email: fixtureEmail('unrelated.fixture'),
+					displayName: 'Unrelated Fixture',
+				},
+				{
+					id: ownedUserId,
+					email: fixtureEmail('owned.fixture'),
+					displayName: 'Owned Fixture',
+				},
+			],
+		});
+
+		await fixtures.cleanup(prisma, requireVerifiedDatabase());
+
+		await expect(prisma.user.findUnique({ where: { id: ownedUserId } })).resolves.toBeNull();
+		await expect(prisma.user.findUnique({ where: { id: unrelatedUserId } })).resolves.toMatchObject({
+			id: unrelatedUserId,
+		});
+	});
+
+	it('cleans fixtures after setup stops with a partial relationship graph', async () => {
+		const userId = fixtures.reserveUserId();
+		const passwordCredentialId = fixtures.reservePasswordCredentialId();
+		const setupError = new Error('intentional partial fixture setup failure');
+		await expect(
+			(async () => {
+				await prisma.user.create({
+					data: {
+						id: userId,
+						email: fixtureEmail('partial.fixture'),
+						displayName: 'Partial Fixture',
+					},
+				});
+				await prisma.passwordCredential.create({
+					data: {
+						id: passwordCredentialId,
+						userId,
+						passwordHash: FICTIONAL_PASSWORD_HASH,
+					},
+				});
+				throw setupError;
+			})(),
+		).rejects.toBe(setupError);
+
+		await fixtures.cleanup(prisma, requireVerifiedDatabase());
+
+		await expect(prisma.user.findUnique({ where: { id: userId } })).resolves.toBeNull();
+	});
+
+	it('keeps fixture cleanup repeatable', async () => {
+		const userId = fixtures.reserveUserId();
+		await prisma.user.create({
+			data: {
+				id: userId,
+				email: fixtureEmail('repeatable.fixture'),
+				displayName: 'Repeatable Fixture',
+			},
+		});
+
+		await fixtures.cleanup(prisma, requireVerifiedDatabase());
+		await expect(fixtures.cleanup(prisma, requireVerifiedDatabase())).resolves.toBeUndefined();
+		await expect(prisma.user.findUnique({ where: { id: userId } })).resolves.toBeNull();
 	});
 
 	it('rolls back related identity and platform staff writes together', async () => {
 		const rollbackError = new Error('intentional platform identity rollback');
-		const email = 'ineza.marie@example.com';
+		const email = fixtureEmail('ineza.marie');
+		const userId = fixtures.reserveUserId();
+		const passwordCredentialId = fixtures.reservePasswordCredentialId();
+		const platformStaffId = fixtures.reservePlatformStaffId();
 
 		await expect(
 			prisma.$transaction(
 				async (transaction) => {
 					const user = await transaction.user.create({
-						data: { email, displayName: 'Marie Ineza' },
+						data: { id: userId, email, displayName: 'Marie Ineza' },
 					});
 					await transaction.passwordCredential.create({
-						data: { userId: user.id, passwordHash: FICTIONAL_PASSWORD_HASH },
+						data: {
+							id: passwordCredentialId,
+							userId: user.id,
+							passwordHash: FICTIONAL_PASSWORD_HASH,
+						},
 					});
 					await transaction.platformStaff.create({
-						data: { userId: user.id, status: PlatformStaffStatus.PENDING },
+						data: {
+							id: platformStaffId,
+							userId: user.id,
+							status: PlatformStaffStatus.PENDING,
+						},
 					});
 					throw rollbackError;
 				},
