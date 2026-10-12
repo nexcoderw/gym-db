@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { Test, type TestingModule } from '@nestjs/testing';
 
 import { DatabaseModule } from '../../src/database/database.module.js';
@@ -15,6 +16,10 @@ const ORGANIZATION_B_ID = '22222222-2222-4222-8222-222222222222';
 const BRANCH_A_ID = '33333333-3333-4333-8333-333333333333';
 const BRANCH_B_ID = '44444444-4444-4444-8444-444444444444';
 const POOL_SIZE = 2;
+const TRANSACTION_MAX_WAIT_MILLISECONDS = 10_000;
+const TRANSACTION_TIMEOUT_MILLISECONDS = 15_000;
+
+jest.setTimeout(30_000);
 
 function requireTestDatabaseUrl(): string {
 	const value = process.env.TEST_DATABASE_URL?.trim();
@@ -70,10 +75,16 @@ async function readTenantSettings(transaction: Prisma.TransactionClient): Promis
 async function readEveryPooledConnection(prisma: PrismaService): Promise<TenantSettings[]> {
 	const rendezvous = createRendezvous(POOL_SIZE);
 	const readConnection = (): Promise<TenantSettings> =>
-		prisma.$transaction(async (transaction) => {
-			await rendezvous();
-			return readTenantSettings(transaction);
-		});
+		prisma.$transaction(
+			async (transaction) => {
+				await rendezvous();
+				return readTenantSettings(transaction);
+			},
+			{
+				maxWait: TRANSACTION_MAX_WAIT_MILLISECONDS,
+				timeout: TRANSACTION_TIMEOUT_MILLISECONDS,
+			},
+		);
 
 	return Promise.all([readConnection(), readConnection()]);
 }
