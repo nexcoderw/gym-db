@@ -1,0 +1,1 @@
+export const DATABASE_CONFIG = Symbol('NEXCODE_GYM_DATABASE_CONFIG');
