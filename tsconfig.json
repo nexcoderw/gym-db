@@ -13,6 +13,7 @@
 		"experimentalDecorators": true,
 		"esModuleInterop": true,
 		"forceConsistentCasingInFileNames": true,
+		"isolatedModules": true,
 		"noFallthroughCasesInSwitch": true,
 		"noImplicitOverride": true,
 		"noUncheckedIndexedAccess": true,
