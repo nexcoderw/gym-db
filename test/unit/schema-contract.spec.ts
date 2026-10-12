@@ -24,7 +24,7 @@ describe('Prisma schema contract', () => {
 			'PlatformStaffRole',
 			'PlatformRolePermission',
 		]) {
-			const modelBlock = schema.match(new RegExp(`model ${model} \\{[\\s\\S]*?\\n\\}`, 'u'))?.[0];
+			const modelBlock = new RegExp(`model ${model} \\{[\\s\\S]*?\\n\\}`, 'u').exec(schema)?.[0];
 			expect(modelBlock).toBeDefined();
 			expect(modelBlock).not.toContain('organizationId');
 		}
