@@ -11,6 +11,9 @@
 
 - Agents **never** run Git write commands: `add`, `commit`, `push`, `pull`, `merge`, `rebase`, `reset`, `restore`, `checkout -- <path>`, `stash`, `tag`, `cherry-pick`, `clean`, or branch creation and deletion ([agent-workflow.md](agent-workflow.md)).
 - Agents may run read-only commands (`git status`, `git diff`, `git log`, `git show`) to understand the working tree.
+- Agents must never create, restore, or modify the repository-local `docs/` directory. It is
+  intentionally prohibited and ignored; keep durable agent rules in `.agents/` when the developer
+  explicitly requests them.
 - At the end of each task, agents list **one commit message per changed file** and show the exact commands for the developer to run: one `git add <file>` and `git commit` pair per file, in the order defined in §2. For example:
 
 ```bash
@@ -43,11 +46,11 @@ Examples: `feat(db): add tenant transaction context`, `fix(config): load local p
 
 | Commit                                                                                                    | Do not commit                                                  |
 | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Source, tests, styles, docs                                                                               | `.env`, `.env.local`, any file with secret values              |
+| Source, tests, styles                                                                                     | `.env`, `.env.local`, any file with secret values              |
 | `prisma/schema.prisma`, `prisma/migrations/**`, `prisma/seed.ts`                                          | `src/generated/**` (Prisma Client output)                      |
 | `package.json` and `package-lock.json` in consecutive commits, when dependencies change                   | `node_modules/`, `.next/`, `coverage/`, build output           |
 | `.env.local.example` and `.env.production.example` with names, non-secret defaults, and placeholders only | Screenshots or exports containing personal data or credentials |
-| `LICENSE`, `README.md`                                                                                    | Editor and OS files (`.DS_Store`, local IDE settings)          |
+| `LICENSE`, `README.md`                                                                                    | `docs/`; editor and OS files (`.DS_Store`, local IDE settings) |
 
 Notes:
 
