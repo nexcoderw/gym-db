@@ -35,16 +35,16 @@ email, billing orchestration, and user-facing DTOs. The API must not carry a sch
 
 ## Environment
 
-Copy `.env.example` to a local ignored file and replace only with non-production credentials.
+Copy `.env.local.example` to `.env.local` and replace only with non-production credentials.
 
-| Variable | Required by | Description |
-| --- | --- | --- |
-| `DATABASE_URL` | runtime and CLI fallback | Runtime PostgreSQL application-role URL |
-| `DIRECT_DATABASE_URL` | migration CLI when pooled | Direct migration-role URL; preferred for DDL |
-| `SHADOW_DATABASE_URL` | local migration generation | Disposable development shadow database |
-| `DATABASE_POOL_MAX` | runtime, optional | Positive per-process pool limit; default `10` |
-| `DATABASE_CONNECTION_TIMEOUT_MS` | runtime, optional | Positive connection timeout; default `10000` |
-| `TEST_DATABASE_URL` | integration tests | Disposable, migrated PostgreSQL test database |
+| Variable                         | Required by                | Description                                   |
+| -------------------------------- | -------------------------- | --------------------------------------------- |
+| `DATABASE_URL`                   | runtime and CLI fallback   | Runtime PostgreSQL application-role URL       |
+| `DIRECT_DATABASE_URL`            | migration CLI when pooled  | Direct migration-role URL; preferred for DDL  |
+| `SHADOW_DATABASE_URL`            | local migration generation | Disposable development shadow database        |
+| `DATABASE_POOL_MAX`              | runtime, optional          | Positive per-process pool limit; default `10` |
+| `DATABASE_CONNECTION_TIMEOUT_MS` | runtime, optional          | Positive connection timeout; default `10000`  |
+| `TEST_DATABASE_URL`              | integration tests          | Disposable, migrated PostgreSQL test database |
 
 Production secrets belong in the deployment secret manager. Never commit `.env` files or embed tokens
 in `.npmrc`. PostgreSQL timestamps are UTC; user-facing business times use `Africa/Kigali`.
@@ -79,7 +79,7 @@ import { DatabaseModule, loadDatabaseConfig } from '@nexcoderw/gym-db';
 import { Module } from '@nestjs/common';
 
 @Module({
-  imports: [DatabaseModule.forRoot(loadDatabaseConfig())],
+	imports: [DatabaseModule.forRoot(loadDatabaseConfig())],
 })
 export class AppModule {}
 ```
