@@ -1,24 +1,24 @@
 # Git Workflow
 
-**Purpose:** Keep CareBasket's history clean, reviewable, and free of secrets, with the developer in full control of every Git write.
+**Purpose:** Keep NEXCODE Gym DB history clean, reviewable, and free of secrets, with the developer in full control of every Git write.
 **Applies to:** The end of every task, and anything that decides what may be committed.
-**Related:** [workflow.md](workflow.md), [security.md § 10](security.md#10-secret-management), [submission.md](submission.md)
-**Last reviewed:** 2026-10-09
+**Related:** [agent-workflow.md](agent-workflow.md), [security.md](security.md), [package-management.md](package-management.md)
+**Last reviewed:** 2026-10-12
 
 ---
 
 ## 1. Agent rules
 
-- Agents **never** run Git write commands: `add`, `commit`, `push`, `pull`, `merge`, `rebase`, `reset`, `restore`, `checkout -- <path>`, `stash`, `tag`, `cherry-pick`, `clean`, or branch creation and deletion ([workflow.md § 1.1](workflow.md#11-agents-must-not-execute)).
+- Agents **never** run Git write commands: `add`, `commit`, `push`, `pull`, `merge`, `rebase`, `reset`, `restore`, `checkout -- <path>`, `stash`, `tag`, `cherry-pick`, `clean`, or branch creation and deletion ([agent-workflow.md](agent-workflow.md)).
 - Agents may run read-only commands (`git status`, `git diff`, `git log`, `git show`) to understand the working tree.
 - At the end of each task, agents list **one commit message per changed file** and show the exact commands for the developer to run: one `git add <file>` and `git commit` pair per file, in the order defined in §2. For example:
 
 ```bash
-git add src/features/checkout/server/service.ts
-git commit -m "feat(checkout): capture and verify PayPal sandbox orders"
+git add src/database/tenant-transaction.service.ts
+git commit -m "feat(db): add tenant transaction context"
 
-git add src/features/checkout/server/service.test.ts
-git commit -m "test(checkout): cover capture verification failures"
+git add test/unit/tenant-transaction.service.spec.ts
+git commit -m "test(db): cover tenant transaction context"
 ```
 
 ## 2. Changes
@@ -33,22 +33,21 @@ git commit -m "test(checkout): cover capture verification failures"
 Format: `type(scope): summary`
 
 - `type`: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `style`, `perf`
-- `scope`: a feature or area (`auth`, `devices`, `requests`, `assistant`, `checkout`, `catalog`, `ui`, `db`, `rules`)
+- `scope`: a feature or area (`db`, `prisma`, `migrations`, `package`, `config`, `test`, `docs`, `rules`)
 - `summary`: imperative, lowercase, no trailing period, at most 72 characters
 - Add a body only when the reason is not obvious from the summary.
 
-Examples: `feat(devices): add adult approval for pairing codes`, `fix(checkout): reject capture when amount differs`, `docs(rules): establish agent engineering rules`.
+Examples: `feat(db): add tenant transaction context`, `fix(config): load local prisma environment`, `docs(rules): establish database engineering rules`.
 
 ## 4. What may be committed
 
-| Commit | Do not commit |
-| --- | --- |
-| Source, tests, styles, docs | `.env`, `.env.local`, any file with secret values |
-| `prisma/schema.prisma`, `prisma/migrations/**`, `prisma/seed.ts` | `src/generated/**` (Prisma Client output) |
-| `package.json` and `package-lock.json` in consecutive commits, when dependencies change | `node_modules/`, `.next/`, `coverage/`, build output |
-| `.env.local.example` and `.env.production.example` with names, non-secret defaults, and placeholders only | Screenshots or exports containing personal data or credentials |
-| Curated product images in `public/products/` with `ATTRIBUTION.md`, and `prisma/catalog/catalog.us.json` (ODbL) | Large binaries, videos, raw design files, audio recordings, catalog candidate reports, raw API dumps |
-| `LICENSE`, `README.md` | Editor and OS files (`.DS_Store`, local IDE settings) |
+| Commit                                                                                                          | Do not commit                                                                                        |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Source, tests, styles, docs                                                                                     | `.env`, `.env.local`, any file with secret values                                                    |
+| `prisma/schema.prisma`, `prisma/migrations/**`, `prisma/seed.ts`                                                | `src/generated/**` (Prisma Client output)                                                            |
+| `package.json` and `package-lock.json` in consecutive commits, when dependencies change                         | `node_modules/`, `.next/`, `coverage/`, build output                                                 |
+| `.env.local.example` and `.env.production.example` with names, non-secret defaults, and placeholders only       | Screenshots or exports containing personal data or credentials                                       |
+| `LICENSE`, `README.md`                                                                                          | Editor and OS files (`.DS_Store`, local IDE settings)                                                |
 
 Notes:
 
@@ -66,7 +65,7 @@ Notes:
 
 - Before committing, the developer checks `git diff --staged` for keys, tokens, connection strings, and personal data.
 - If a secret is ever committed, rotate it at the provider immediately. Removing it from history is not enough once it has been pushed.
-- The repository will be public for the hackathon ([hackathon.md](hackathon.md)). Treat every commit as public.
+- Treat every commit as potentially disclosed, even when the package and repository are private.
 
 ## 7. Acceptance criteria
 
