@@ -41,5 +41,7 @@ optional organization argument.
 For each tenant model, integration tests create fictional tenant A and tenant B, then prove reads,
 writes, nested relations, unique conflicts, and raw queries cannot cross the boundary. Run tests using
 the same privilege shape as production. The tenant transaction integration suite requires an explicit
-`TEST_DATABASE_URL` for a disposable, migrated PostgreSQL database and fails rather than silently
-skipping when it is absent.
+`TEST_DATABASE_URL`, a unique `TEST_DATABASE_MARKER`, and a dedicated restricted role for a disposable,
+migrated PostgreSQL database. It verifies the live database marker and effective privileges before
+running tests rather than trusting URL inequality or silently skipping verification. Follow the
+[secure integration-test runbook](../runbooks/integration-tests.md).
