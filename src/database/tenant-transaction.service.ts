@@ -12,8 +12,13 @@ export type TenantTransactionCallback<TResult> = (
 
 /**
  * Runs tenant-owned operations in a transaction with PostgreSQL session context set locally.
- * Future RLS policies must read these settings with `current_setting(name, true)` and deny access
- * when the organization value is absent. Transaction-local values cannot leak through the pool.
+ * The API must authenticate and authorize the organization and optional branch before calling this
+ * service; UUID validation verifies identifier shape, not access. The operation starts only after
+ * both settings are initialized. Future RLS policies must read them with
+ * `current_setting(name, true)` and deny access when organization context is absent.
+ *
+ * PostgreSQL clears these transaction-local values on commit or rollback, preventing pooled
+ * connections from carrying tenant context into later transactions.
  */
 @Injectable()
 export class TenantTransactionService {
@@ -29,10 +34,10 @@ export class TenantTransactionService {
 		}
 
 		return this.prisma.$transaction(async (transaction) => {
-			await transaction.$executeRaw`
+			await transaction.$queryRaw`
 				SELECT set_config('app.current_organization_id', ${context.organizationId}, true)
 			`;
-			await transaction.$executeRaw`
+			await transaction.$queryRaw`
 				SELECT set_config('app.current_branch_id', ${context.branchId ?? ''}, true)
 			`;
 
