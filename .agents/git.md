@@ -41,13 +41,13 @@ Examples: `feat(db): add tenant transaction context`, `fix(config): load local p
 
 ## 4. What may be committed
 
-| Commit                                                                                                          | Do not commit                                                                                        |
-| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Source, tests, styles, docs                                                                                     | `.env`, `.env.local`, any file with secret values                                                    |
-| `prisma/schema.prisma`, `prisma/migrations/**`, `prisma/seed.ts`                                                | `src/generated/**` (Prisma Client output)                                                            |
-| `package.json` and `package-lock.json` in consecutive commits, when dependencies change                         | `node_modules/`, `.next/`, `coverage/`, build output                                                 |
-| `.env.local.example` and `.env.production.example` with names, non-secret defaults, and placeholders only       | Screenshots or exports containing personal data or credentials                                       |
-| `LICENSE`, `README.md`                                                                                          | Editor and OS files (`.DS_Store`, local IDE settings)                                                |
+| Commit                                                                                                    | Do not commit                                                  |
+| --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Source, tests, styles, docs                                                                               | `.env`, `.env.local`, any file with secret values              |
+| `prisma/schema.prisma`, `prisma/migrations/**`, `prisma/seed.ts`                                          | `src/generated/**` (Prisma Client output)                      |
+| `package.json` and `package-lock.json` in consecutive commits, when dependencies change                   | `node_modules/`, `.next/`, `coverage/`, build output           |
+| `.env.local.example` and `.env.production.example` with names, non-secret defaults, and placeholders only | Screenshots or exports containing personal data or credentials |
+| `LICENSE`, `README.md`                                                                                    | Editor and OS files (`.DS_Store`, local IDE settings)          |
 
 Notes:
 
