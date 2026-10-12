@@ -15,7 +15,7 @@ describe('TenantTransactionService', () => {
 		const service = module.get(TenantTransactionService);
 
 		await expect(
-			service.run({ organizationId: 'not-a-uuid' }, async () => undefined),
+			service.run({ organizationId: 'not-a-uuid' }, () => Promise.resolve(undefined)),
 		).rejects.toThrow('organizationId must be a valid UUID.');
 		expect(transaction).not.toHaveBeenCalled();
 	});
@@ -23,8 +23,8 @@ describe('TenantTransactionService', () => {
 	it('sets tenant context before invoking the operation', async () => {
 		const executeRaw = jest.fn().mockResolvedValue(1);
 		const transactionClient = { $executeRaw: executeRaw };
-		const transaction = jest.fn(async (callback: (client: typeof transactionClient) => unknown) =>
-			callback(transactionClient),
+		const transaction = jest.fn((callback: (client: typeof transactionClient) => unknown) =>
+			Promise.resolve(callback(transactionClient)),
 		);
 		const module = await Test.createTestingModule({
 			providers: [
