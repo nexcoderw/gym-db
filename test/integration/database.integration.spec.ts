@@ -4,7 +4,7 @@ import { DatabaseModule } from '../../src/database/database.module.js';
 import { PrismaService } from '../../src/database/prisma.service.js';
 import { TenantTransactionService } from '../../src/database/tenant-transaction.service.js';
 
-const testDatabaseUrl = process.env['TEST_DATABASE_URL'];
+const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 const describeWithDatabase = testDatabaseUrl === undefined ? describe.skip : describe;
 
 describeWithDatabase('database integration', () => {
@@ -39,13 +39,13 @@ describeWithDatabase('database integration', () => {
 
 		await expect(
 			tenantTransactions.run({ organizationId }, async (transaction) => {
-				return transaction.$queryRaw<Array<{ organization_id: string }>>`
+				return transaction.$queryRaw<{ organization_id: string }[]>`
 					SELECT current_setting('app.current_organization_id', true) AS organization_id
 				`;
 			}),
 		).resolves.toEqual([{ organization_id: organizationId }]);
 
-		const outsideTransaction = await prisma.$queryRaw<Array<{ organization_id: string | null }>>`
+		const outsideTransaction = await prisma.$queryRaw<{ organization_id: string | null }[]>`
 				SELECT current_setting('app.current_organization_id', true) AS organization_id
 			`;
 		expect(outsideTransaction[0]?.organization_id).not.toBe(organizationId);
