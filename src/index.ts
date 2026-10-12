@@ -1,8 +1,5 @@
 export { loadDatabaseConfig, type DatabaseConfig } from './config/database.config.js';
-export {
-	DatabaseModule,
-	type DatabaseModuleAsyncOptions,
-} from './database/database.module.js';
+export { DatabaseModule, type DatabaseModuleAsyncOptions } from './database/database.module.js';
 export { PrismaService } from './database/prisma.service.js';
 export {
 	TenantTransactionService,
