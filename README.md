@@ -13,10 +13,14 @@ It is a package consumed by `gym-api`; it is not a public server and contains no
 - `DatabaseModule` creates one lifecycle-managed `PrismaService` using `@prisma/adapter-pg`.
 - `TenantTransactionService` installs transaction-local organization and branch context for future
   fail-closed PostgreSQL RLS policies. Prisma does not provide tenant isolation on its own.
+- Global users remain separate from NEXCODE platform-staff assignments and explicit platform RBAC.
+  Creating an account grants no platform access.
 - `src/index.ts` is the sole supported public entry point.
 
 See [package architecture](docs/architecture/package-architecture.md),
-[database conventions](docs/database/schema-conventions.md), and the [ADRs](docs/adr/).
+[database conventions](docs/database/schema-conventions.md),
+[platform administrator identity](docs/database/platform-admin-identity.md), and the
+[ADRs](docs/adr/).
 
 ## Responsibilities
 
@@ -119,9 +123,10 @@ private). Consumers need `read:packages`. Use `npm login --scope=@nexcoderw --au
 Unit tests cover configuration, module exports, tenant validation, parameterized context setup, and
 fail-before-callback behavior. Integration tests require a disposable `TEST_DATABASE_URL` and verify
 transaction-local context, success and rollback cleanup, sequential tenant replacement, and concurrent
-tenant separation. The suite fails with an explicit configuration error when `TEST_DATABASE_URL` is
-missing or matches `DATABASE_URL`; it never silently skips database verification. Future models must
-add real PostgreSQL constraint and cross-tenant denial tests under RLS.
+tenant separation. They also verify platform identity uniqueness, restrictive relationships, explicit
+RBAC assignments, suspension states, and rollback. The suite fails with an explicit configuration
+error when `TEST_DATABASE_URL` is missing or matches `DATABASE_URL`; it never silently skips database
+verification. Future tenant models must add cross-tenant denial tests under RLS.
 
 Use distinct least-privilege runtime and migration roles, TLS outside trusted local development,
 parameterized SQL, and synthetic examples (for example fictional Soho Gym branches in Kimihurura and
