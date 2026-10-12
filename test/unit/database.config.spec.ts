@@ -20,9 +20,9 @@ describe('loadDatabaseConfig', () => {
 
 	it('rejects non-PostgreSQL protocols without exposing the URL', () => {
 		const secret = 'do-not-log-this';
-		expect(() => loadDatabaseConfig({ DATABASE_URL: `mysql://app:${secret}@localhost/gym` })).toThrow(
-			'DATABASE_URL must use the postgresql: or postgres: protocol.',
-		);
+		expect(() =>
+			loadDatabaseConfig({ DATABASE_URL: `mysql://app:${secret}@localhost/gym` }),
+		).toThrow('DATABASE_URL must use the postgresql: or postgres: protocol.');
 
 		try {
 			loadDatabaseConfig({ DATABASE_URL: `mysql://app:${secret}@localhost/gym` });
