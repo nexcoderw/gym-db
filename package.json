@@ -1,6 +1,6 @@
 {
 	"name": "@nexcoderw/gym-db",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Database schema, Prisma client, and NestJS database module for NEXCODE Gym",
 	"license": "UNLICENSED",
 	"author": "NEXCODE LTD",
