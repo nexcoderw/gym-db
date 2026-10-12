@@ -27,14 +27,18 @@ export default tseslint.config(
 		},
 		rules: {
 			'@typescript-eslint/consistent-type-exports': 'error',
-			'@typescript-eslint/consistent-type-imports': [
-				'error',
-				{ fixStyle: 'inline-type-imports' },
-			],
+			'@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],
 			'@typescript-eslint/no-explicit-any': 'error',
 			'@typescript-eslint/no-floating-promises': 'error',
 			'@typescript-eslint/no-unsafe-argument': 'error',
 			'prettier/prettier': ['error', { endOfLine: 'lf', useTabs: true }],
+		},
+	},
+	{
+		files: ['**/*.module.ts'],
+		rules: {
+			// Nest modules are framework-discovered classes and may expose only static registration APIs.
+			'@typescript-eslint/no-extraneous-class': 'off',
 		},
 	},
 );
