@@ -4,16 +4,34 @@ import { Test } from '@nestjs/testing';
 import { PrismaService } from '../../src/database/prisma.service.js';
 import { TenantTransactionService } from '../../src/database/tenant-transaction.service.js';
 
+type RawQuery = (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>;
+
+async function createSubject(
+	queryRaw: jest.Mock<RawQuery> = jest.fn<RawQuery>().mockResolvedValue([]),
+) {
+	const operationClient = { $queryRaw: queryRaw };
+	const transaction = jest.fn(
+		(callback: (client: typeof operationClient) => unknown) =>
+			Promise.resolve(callback(operationClient)),
+	);
+	const module = await Test.createTestingModule({
+		providers: [
+			TenantTransactionService,
+			{ provide: PrismaService, useValue: { $transaction: transaction } },
+		],
+	}).compile();
+
+	return {
+		operationClient,
+		queryRaw,
+		service: module.get(TenantTransactionService),
+		transaction,
+	};
+}
+
 describe('TenantTransactionService', () => {
-	it('rejects invalid tenant identifiers before opening a transaction', async () => {
-		const transaction = jest.fn();
-		const module = await Test.createTestingModule({
-			providers: [
-				TenantTransactionService,
-				{ provide: PrismaService, useValue: { $transaction: transaction } },
-			],
-		}).compile();
-		const service = module.get(TenantTransactionService);
+	it('rejects an invalid organization identifier before opening a transaction', async () => {
+		const { service, transaction } = await createSubject();
 
 		await expect(
 			service.run({ organizationId: 'not-a-uuid' }, () => Promise.resolve(undefined)),
@@ -21,20 +39,79 @@ describe('TenantTransactionService', () => {
 		expect(transaction).not.toHaveBeenCalled();
 	});
 
-	it('sets tenant context before invoking the operation', async () => {
-		const executeRaw = jest.fn().mockResolvedValue(1);
-		const transactionClient = { $executeRaw: executeRaw };
-		const transaction = jest.fn((callback: (client: typeof transactionClient) => unknown) =>
-			Promise.resolve(callback(transactionClient)),
-		);
-		const module = await Test.createTestingModule({
-			providers: [
-				TenantTransactionService,
-				{ provide: PrismaService, useValue: { $transaction: transaction } },
-			],
-		}).compile();
-		const service = module.get(TenantTransactionService);
-		const operation = jest.fn().mockResolvedValue('complete');
+	it('rejects an invalid branch identifier before opening a transaction', async () => {
+		const { service, transaction } = await createSubject();
+
+		await expect(
+			service.run(
+				{
+					organizationId: '11111111-1111-4111-8111-111111111111',
+					branchId: 'not-a-uuid',
+				},
+				() => Promise.resolve(undefined),
+			),
+		).rejects.toThrow('branchId must be a valid UUID.');
+		expect(transaction).not.toHaveBeenCalled();
+	});
+
+	it('sets a valid organization and an empty branch before invoking the operation', async () => {
+		const events: string[] = [];
+		const queryRaw = jest.fn<RawQuery>((_query, value) => {
+			if (typeof value !== 'string') {
+				throw new Error('Expected a parameterized tenant value.');
+			}
+			events.push(value);
+			return Promise.resolve([]);
+		});
+		const { operationClient, service } = await createSubject(queryRaw);
+		const operation = jest.fn((_transaction: unknown) => {
+			events.push('operation');
+			return Promise.resolve('complete');
+		});
+		const organizationId = '11111111-1111-4111-8111-111111111111';
+
+		await expect(service.run({ organizationId }, operation)).resolves.toBe('complete');
+		expect(queryRaw).toHaveBeenCalledTimes(2);
+		expect(queryRaw.mock.calls[0]?.[1]).toBe(organizationId);
+		expect(queryRaw.mock.calls[1]?.[1]).toBe('');
+		expect(events).toEqual([organizationId, '', 'operation']);
+		expect(operation).toHaveBeenCalledWith(operationClient);
+	});
+
+	it('sets a valid branch before invoking the operation', async () => {
+		const { queryRaw, service } = await createSubject();
+		const organizationId = '11111111-1111-4111-8111-111111111111';
+		const branchId = '22222222-2222-4222-8222-222222222222';
+
+		await service.run({ organizationId, branchId }, () => Promise.resolve(undefined));
+
+		expect(queryRaw.mock.calls[0]?.[1]).toBe(organizationId);
+		expect(queryRaw.mock.calls[1]?.[1]).toBe(branchId);
+	});
+
+	it('does not invoke the operation when tenant context initialization fails', async () => {
+		const initializationError = new Error('context initialization failed');
+		const queryRaw = jest.fn<RawQuery>().mockRejectedValue(initializationError);
+		const { service } = await createSubject(queryRaw);
+		const operation = jest.fn(() => Promise.resolve(undefined));
+
+		await expect(
+			service.run(
+				{ organizationId: '11111111-1111-4111-8111-111111111111' },
+				operation,
+			),
+		).rejects.toBe(initializationError);
+		expect(queryRaw).toHaveBeenCalledTimes(1);
+		expect(operation).not.toHaveBeenCalled();
+	});
+
+	it('does not invoke the operation when branch context initialization fails', async () => {
+		const initializationError = new Error('branch context initialization failed');
+		const queryRaw = jest.fn<RawQuery>()
+			.mockResolvedValueOnce([])
+			.mockRejectedValueOnce(initializationError);
+		const { service } = await createSubject(queryRaw);
+		const operation = jest.fn(() => Promise.resolve(undefined));
 
 		await expect(
 			service.run(
@@ -44,8 +121,23 @@ describe('TenantTransactionService', () => {
 				},
 				operation,
 			),
-		).resolves.toBe('complete');
-		expect(executeRaw).toHaveBeenCalledTimes(2);
-		expect(operation).toHaveBeenCalledWith(transactionClient);
+		).rejects.toBe(initializationError);
+		expect(queryRaw).toHaveBeenCalledTimes(2);
+		expect(operation).not.toHaveBeenCalled();
+	});
+
+	it('uses parameterized tagged queries for tenant values', async () => {
+		const { queryRaw, service } = await createSubject();
+		const organizationId = '11111111-1111-4111-8111-111111111111';
+		const branchId = '22222222-2222-4222-8222-222222222222';
+
+		await service.run({ organizationId, branchId }, () => Promise.resolve(undefined));
+
+		const organizationTemplate = queryRaw.mock.calls[0]?.[0];
+		const branchTemplate = queryRaw.mock.calls[1]?.[0];
+		expect(organizationTemplate?.join('')).not.toContain(organizationId);
+		expect(branchTemplate?.join('')).not.toContain(branchId);
+		expect(queryRaw.mock.calls[0]?.[1]).toBe(organizationId);
+		expect(queryRaw.mock.calls[1]?.[1]).toBe(branchId);
 	});
 });
