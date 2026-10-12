@@ -12,16 +12,23 @@ From `api/db`:
 
 ```bash
 npm install
+set -a
+source .env.local
+set +a
 npm run prisma:generate
 npm run prisma:validate
 npm run format:check
 npm run lint
 npm run typecheck
 npm run test:unit
-TEST_DATABASE_URL='postgresql://...' npm run test:integration
+npm run test:integration
 npm run build
 npm pack --dry-run
 ```
+
+Provision and verify the disposable target through the
+[secure integration-test runbook](integration-tests.md) before release verification. A distinct URL
+without the required database marker and restricted role is insufficient.
 
 Inspect the pack list for `dist/index.js`, declarations, and compiled generated Prisma client. It must
 not contain `.env`, source secrets, tests, or schema paths required at consumer runtime.
