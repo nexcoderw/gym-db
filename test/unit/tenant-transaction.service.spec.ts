@@ -10,9 +10,8 @@ async function createSubject(
 	queryRaw: jest.Mock<RawQuery> = jest.fn<RawQuery>().mockResolvedValue([]),
 ) {
 	const operationClient = { $queryRaw: queryRaw };
-	const transaction = jest.fn(
-		(callback: (client: typeof operationClient) => unknown) =>
-			Promise.resolve(callback(operationClient)),
+	const transaction = jest.fn((callback: (client: typeof operationClient) => unknown) =>
+		Promise.resolve(callback(operationClient)),
 	);
 	const module = await Test.createTestingModule({
 		providers: [
@@ -64,7 +63,7 @@ describe('TenantTransactionService', () => {
 			return Promise.resolve([]);
 		});
 		const { operationClient, service } = await createSubject(queryRaw);
-		const operation = jest.fn((_transaction: unknown) => {
+		const operation = jest.fn(() => {
 			events.push('operation');
 			return Promise.resolve('complete');
 		});
@@ -96,10 +95,7 @@ describe('TenantTransactionService', () => {
 		const operation = jest.fn(() => Promise.resolve(undefined));
 
 		await expect(
-			service.run(
-				{ organizationId: '11111111-1111-4111-8111-111111111111' },
-				operation,
-			),
+			service.run({ organizationId: '11111111-1111-4111-8111-111111111111' }, operation),
 		).rejects.toBe(initializationError);
 		expect(queryRaw).toHaveBeenCalledTimes(1);
 		expect(operation).not.toHaveBeenCalled();
@@ -107,7 +103,8 @@ describe('TenantTransactionService', () => {
 
 	it('does not invoke the operation when branch context initialization fails', async () => {
 		const initializationError = new Error('branch context initialization failed');
-		const queryRaw = jest.fn<RawQuery>()
+		const queryRaw = jest
+			.fn<RawQuery>()
 			.mockResolvedValueOnce([])
 			.mockRejectedValueOnce(initializationError);
 		const { service } = await createSubject(queryRaw);
