@@ -31,7 +31,7 @@ function parsePositiveInteger(value: string | undefined, fallback: number, name:
  * The API should call this during bootstrap and fail before accepting traffic.
  */
 export function loadDatabaseConfig(environment: NodeJS.ProcessEnv = process.env): DatabaseConfig {
-	const databaseUrl = environment['DATABASE_URL'];
+	const databaseUrl = environment.DATABASE_URL;
 	if (databaseUrl === undefined || databaseUrl.trim() === '') {
 		throw new Error('DATABASE_URL is required.');
 	}
@@ -50,12 +50,12 @@ export function loadDatabaseConfig(environment: NodeJS.ProcessEnv = process.env)
 	return Object.freeze({
 		databaseUrl,
 		poolMax: parsePositiveInteger(
-			environment['DATABASE_POOL_MAX'],
+			environment.DATABASE_POOL_MAX,
 			DEFAULT_POOL_MAX,
 			'DATABASE_POOL_MAX',
 		),
 		connectionTimeoutMilliseconds: parsePositiveInteger(
-			environment['DATABASE_CONNECTION_TIMEOUT_MS'],
+			environment.DATABASE_CONNECTION_TIMEOUT_MS,
 			DEFAULT_CONNECTION_TIMEOUT_MILLISECONDS,
 			'DATABASE_CONNECTION_TIMEOUT_MS',
 		),
