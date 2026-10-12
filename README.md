@@ -19,8 +19,8 @@ It is a package consumed by `gym-api`; it is not a public server and contains no
 
 See [package architecture](docs/architecture/package-architecture.md),
 [database conventions](docs/database/schema-conventions.md),
-[platform administrator identity](docs/database/platform-admin-identity.md), and the
-[ADRs](docs/adr/).
+[platform administrator identity](docs/database/platform-admin-identity.md), the
+[secure integration-test runbook](docs/runbooks/integration-tests.md), and the [ADRs](docs/adr/).
 
 ## Responsibilities
 
@@ -41,14 +41,16 @@ email, billing orchestration, and user-facing DTOs. The API must not carry a sch
 
 Copy `.env.local.example` to `.env.local` and replace only with non-production credentials.
 
-| Variable                         | Required by                | Description                                   |
-| -------------------------------- | -------------------------- | --------------------------------------------- |
-| `DATABASE_URL`                   | runtime and CLI fallback   | Runtime PostgreSQL application-role URL       |
-| `DIRECT_DATABASE_URL`            | migration CLI when pooled  | Direct migration-role URL; preferred for DDL  |
-| `SHADOW_DATABASE_URL`            | local migration generation | Disposable development shadow database        |
-| `DATABASE_POOL_MAX`              | runtime, optional          | Positive per-process pool limit; default `10` |
-| `DATABASE_CONNECTION_TIMEOUT_MS` | runtime, optional          | Positive connection timeout; default `10000`  |
-| `TEST_DATABASE_URL`              | integration tests          | Disposable, migrated PostgreSQL test database |
+| Variable                         | Required by                | Description                                      |
+| -------------------------------- | -------------------------- | ------------------------------------------------ |
+| `DATABASE_URL`                   | runtime and CLI fallback   | Runtime PostgreSQL application-role URL          |
+| `DIRECT_DATABASE_URL`            | migration CLI when pooled  | Direct migration-role URL; preferred for DDL     |
+| `SHADOW_DATABASE_URL`            | local migration generation | Disposable development shadow database           |
+| `DATABASE_POOL_MAX`              | runtime, optional          | Positive per-process pool limit; default `10`    |
+| `DATABASE_CONNECTION_TIMEOUT_MS` | runtime, optional          | Positive connection timeout; default `10000`     |
+| `TEST_DATABASE_URL`              | integration tests          | Restricted DML-only disposable test URL           |
+| `TEST_DATABASE_MARKER`           | integration tests          | UUID recorded in the disposable database comment |
+| `TEST_MIGRATION_DATABASE_URL`    | test migration deployment  | Direct owner URL; never used by test execution    |
 
 Production secrets belong in the deployment secret manager. Never commit `.env` files or embed tokens
 in `.npmrc`. PostgreSQL timestamps are UTC; user-facing business times use `Africa/Kigali`.
@@ -59,6 +61,9 @@ All commands in this repository are human-operated. From `api/db`:
 
 ```bash
 npm install
+set -a
+source .env.local
+set +a
 npm run prisma:generate
 npm run prisma:format
 npm run prisma:validate
@@ -66,7 +71,7 @@ npm run format
 npm run lint
 npm run typecheck
 npm run test:unit
-TEST_DATABASE_URL='postgresql://...' npm run test:integration
+npm run test:integration
 npm run build
 npm pack --dry-run
 ```
@@ -121,12 +126,16 @@ private). Consumers need `read:packages`. Use `npm login --scope=@nexcoderw --au
 ## Testing and security
 
 Unit tests cover configuration, module exports, tenant validation, parameterized context setup, and
-fail-before-callback behavior. Integration tests require a disposable `TEST_DATABASE_URL` and verify
-transaction-local context, success and rollback cleanup, sequential tenant replacement, and concurrent
-tenant separation. They also verify platform identity uniqueness, restrictive relationships, explicit
-RBAC assignments, suspension states, and rollback. The suite fails with an explicit configuration
-error when `TEST_DATABASE_URL` is missing or matches `DATABASE_URL`; it never silently skips database
-verification. Future tenant models must add cross-tenant denial tests under RLS.
+fail-before-callback behavior. Integration tests require a disposable `TEST_DATABASE_URL`, a unique
+`TEST_DATABASE_MARKER`, and a dedicated non-administrative test role. Before any write, the suite
+verifies the actual connected database, its human-provisioned marker, and role privileges. URL
+inequality and database naming are only preliminary heuristics; different URLs can still reach the
+same database. Fixture cleanup is limited to identifiers reserved by the current test and preserves
+unrelated rows. The suite verifies transaction-local context, success and rollback cleanup, sequential
+tenant replacement, concurrent tenant separation, platform identity uniqueness, restrictive
+relationships, explicit RBAC assignments, suspension/revocation states, and rollback. Future tenant
+models must add cross-tenant denial tests under RLS. Follow the
+[secure integration-test runbook](docs/runbooks/integration-tests.md) before running the suite.
 
 Use distinct least-privilege runtime and migration roles, TLS outside trusted local development,
 parameterized SQL, and synthetic examples (for example fictional Soho Gym branches in Kimihurura and
@@ -140,8 +149,9 @@ Remera). See [tenant isolation](docs/database/tenant-isolation.md).
   and update `SHADOW_DATABASE_URL`. Prisma Migrate may reset it, so never reuse runtime or test data.
 - **Migration deploy reports no migrations:** run the reviewed create-only workflow first; do not deploy
   until the generated SQL has been inspected and approved.
-- **Integration suite requires configuration:** provide a disposable `TEST_DATABASE_URL` distinct from
-  `DATABASE_URL` and apply migrations first. Missing or reused configuration fails the suite.
+- **Integration suite requires configuration:** provision the marker and restricted role described in
+  the [integration-test runbook](docs/runbooks/integration-tests.md), then apply reviewed migrations.
+  Missing, privileged, reused, or unverified configurations fail before test writes.
 - **Process does not disconnect:** verify the API enabled Nest shutdown hooks.
 - **GitHub Packages returns 401/403:** confirm scope registry, token scopes, SSO/repository access, and
   that the token is supplied through the user npm configuration rather than this repository.
