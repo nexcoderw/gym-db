@@ -17,14 +17,13 @@ It is a package consumed by `gym-api`; it is not a public server and contains no
   Creating an account grants no platform access.
 - `src/index.ts` is the sole supported public entry point.
 
-Maintainer-only architecture decisions and operational runbooks are kept locally under the ignored
-`docs/` directory.
+Essential package guidance lives in this README; agent-only engineering rules live in `.agents/`.
 
 ## Responsibilities
 
 This package owns models, relations, constraints, indexes, enums, migrations, client generation,
 connection lifecycle, database configuration, tenant primitives, integrity tests, and migration
-runbooks. `gym-api` owns transport, authentication, authorization decisions, business workflows,
+safety controls. `gym-api` owns transport, authentication, authorization decisions, business workflows,
 email, billing orchestration, and user-facing DTOs. The API must not carry a schema or migrations.
 
 ## Prerequisites
@@ -106,8 +105,8 @@ Do not build the full gym model speculatively. Each change follows this order:
 5. Publish a compatible package and update `gym-api` to that exact version.
 6. Contract only in a later release after old readers/writers are gone.
 
-Never use `prisma db push` in production or edit a migration already applied. Follow the locally
-maintained migration and recovery runbooks for deployment and incident procedures.
+Never use `prisma db push` in production or edit a migration already applied. Follow the approved
+deployment and incident procedures maintained outside this repository.
 
 ## Versioning and publication
 
@@ -118,8 +117,8 @@ immutable.
 
 GitHub Packages publication requires an npm token with `write:packages` (and repository access when
 private). Consumers need `read:packages`. Use `npm login --scope=@nexcoderw --auth-type=legacy
---registry=https://npm.pkg.github.com`, never a committed token. Follow the locally maintained release
-runbook.
+--registry=https://npm.pkg.github.com`, never a committed token. Follow the approved release procedure
+maintained outside this repository.
 
 ## Testing and security
 
@@ -132,12 +131,12 @@ same database. Fixture cleanup is limited to identifiers reserved by the current
 unrelated rows. The suite verifies transaction-local context, success and rollback cleanup, sequential
 tenant replacement, concurrent tenant separation, platform identity uniqueness, restrictive
 relationships, explicit RBAC assignments, suspension/revocation states, and rollback. Future tenant
-models must add cross-tenant denial tests under RLS. Follow the locally maintained secure
-integration-test runbook before running the suite.
+models must add cross-tenant denial tests under RLS. Follow the integration-test safety requirements
+in this section before running the suite.
 
 Use distinct least-privilege runtime and migration roles, TLS outside trusted local development,
 parameterized SQL, and synthetic examples (for example fictional Soho Gym branches in Kimihurura and
-Remera). Follow the locally maintained tenant-isolation guidance.
+Remera). Follow the tenant-isolation requirements in this section.
 
 ## Troubleshooting
 
@@ -147,13 +146,13 @@ Remera). Follow the locally maintained tenant-isolation guidance.
   and update `SHADOW_DATABASE_URL`. Prisma Migrate may reset it, so never reuse runtime or test data.
 - **Migration deploy reports no migrations:** run the reviewed create-only workflow first; do not deploy
   until the generated SQL has been inspected and approved.
-- **Integration suite requires configuration:** provision the marker and restricted role described in
-  the local integration-test runbook, then apply reviewed migrations. Missing, privileged, reused, or
-  unverified configurations fail before test writes.
+- **Integration suite requires configuration:** provision a unique database marker and restricted role,
+  then apply reviewed migrations. Missing, privileged, reused, or unverified configurations fail before
+  test writes.
 - **Process does not disconnect:** verify the API enabled Nest shutdown hooks.
 - **GitHub Packages returns 401/403:** confirm scope registry, token scopes, SSO/repository access, and
   that the token is supplied through the user npm configuration rather than this repository.
-- **Migration drift:** stop deployment; follow the migration and recovery runbooks. Do not use `db push`.
+- **Migration drift:** stop deployment and follow the approved recovery procedure. Do not use `db push`.
 
 ## Engineering rules
 
