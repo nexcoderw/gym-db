@@ -23,6 +23,10 @@ describe('Prisma schema contract', () => {
 			'PlatformPermission',
 			'PlatformStaffRole',
 			'PlatformRolePermission',
+			'PlatformAdminSession',
+			'PlatformTotpCredential',
+			'PlatformRecoveryCode',
+			'PlatformMfaChallenge',
 		]) {
 			const modelBlock = new RegExp(`model ${model} \\{[\\s\\S]*?\\n\\}`, 'u').exec(schema)?.[0];
 			expect(modelBlock).toBeDefined();
@@ -32,11 +36,31 @@ describe('Prisma schema contract', () => {
 		expect(schema).not.toContain('isSuperAdmin');
 	});
 
+	it('stores only protected platform authentication material', async () => {
+		const schemaUrl = new URL('../../prisma/schema.prisma', import.meta.url);
+		const schema = await readFile(schemaUrl, 'utf8');
+		const session = /model PlatformAdminSession \{[\s\S]*?\n\}/u.exec(schema)?.[0];
+		const totp = /model PlatformTotpCredential \{[\s\S]*?\n\}/u.exec(schema)?.[0];
+		const recoveryCode = /model PlatformRecoveryCode \{[\s\S]*?\n\}/u.exec(schema)?.[0];
+		const challenge = /model PlatformMfaChallenge \{[\s\S]*?\n\}/u.exec(schema)?.[0];
+
+		expect(session).toMatch(/tokenDigest\s+String\s+@unique/u);
+		expect(session).toMatch(/mfaVerifiedAt\s+DateTime\s+@map/u);
+		expect(totp).toMatch(/platformStaffId\s+String\s+@unique/u);
+		expect(totp).toMatch(/encryptedSecret\s+Bytes/u);
+		expect(totp).toContain('lastAcceptedTimeStep BigInt?');
+		expect(recoveryCode).toMatch(/codeDigest\s+String\s+@unique/u);
+		expect(challenge).toMatch(/tokenDigest\s+String\s+@unique/u);
+		expect(challenge).toContain('failedAttempts');
+		expect(challenge).toContain('maxAttempts');
+		expect(schema).not.toMatch(/^\s+(?:token|secret|recoveryCode)\s+/mu);
+	});
+
 	it('uses restrictive foreign keys for security-sensitive relationships', async () => {
 		const schemaUrl = new URL('../../prisma/schema.prisma', import.meta.url);
 		const schema = await readFile(schemaUrl, 'utf8');
 		const restrictiveRelations = schema.match(/onDelete:\s*Restrict,\s*onUpdate:\s*Restrict/gu);
 
-		expect(restrictiveRelations?.length).toBeGreaterThanOrEqual(6);
+		expect(restrictiveRelations?.length).toBeGreaterThanOrEqual(10);
 	});
 });
