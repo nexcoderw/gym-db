@@ -1,0 +1,12 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Business models are intentionally absent from the foundation release. Add them only through
+// reviewed schema changes and generated migrations owned by this repository.
