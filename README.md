@@ -136,6 +136,10 @@ Remera). See [tenant isolation](docs/database/tenant-isolation.md).
 
 - **Generated client import missing:** run `npm run prisma:generate` after installing dependencies.
 - **CLI uses a pooler:** set `DIRECT_DATABASE_URL` to a direct migration connection.
+- **Shadow database matches the migration database:** provision a dedicated disposable shadow database
+  and update `SHADOW_DATABASE_URL`. Prisma Migrate may reset it, so never reuse runtime or test data.
+- **Migration deploy reports no migrations:** run the reviewed create-only workflow first; do not deploy
+  until the generated SQL has been inspected and approved.
 - **Integration suite requires configuration:** provide a disposable `TEST_DATABASE_URL` distinct from
   `DATABASE_URL` and apply migrations first. Missing or reused configuration fails the suite.
 - **Process does not disconnect:** verify the API enabled Nest shutdown hooks.
