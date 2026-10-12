@@ -8,6 +8,8 @@ import { PlatformStaffStatus, UserStatus } from '../../src/generated/prisma/clie
 const FICTIONAL_PASSWORD_HASH = 'argon2id-test-hash-not-a-real-credential';
 const UNKNOWN_USER_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const UNKNOWN_ROLE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const TRANSACTION_MAX_WAIT_MILLISECONDS = 10_000;
+const TRANSACTION_TIMEOUT_MILLISECONDS = 15_000;
 
 jest.setTimeout(30_000);
 
@@ -31,15 +33,21 @@ function requireTestDatabaseUrl(): string {
 }
 
 async function clearPlatformData(prisma: PrismaService): Promise<void> {
-	await prisma.$transaction([
-		prisma.platformRolePermission.deleteMany(),
-		prisma.platformStaffRole.deleteMany(),
-		prisma.passwordCredential.deleteMany(),
-		prisma.platformPermission.deleteMany(),
-		prisma.platformRole.deleteMany(),
-		prisma.platformStaff.deleteMany(),
-		prisma.user.deleteMany(),
-	]);
+	await prisma.$transaction(
+		async (transaction) => {
+			await transaction.platformRolePermission.deleteMany();
+			await transaction.platformStaffRole.deleteMany();
+			await transaction.passwordCredential.deleteMany();
+			await transaction.platformPermission.deleteMany();
+			await transaction.platformRole.deleteMany();
+			await transaction.platformStaff.deleteMany();
+			await transaction.user.deleteMany();
+		},
+		{
+			maxWait: TRANSACTION_MAX_WAIT_MILLISECONDS,
+			timeout: TRANSACTION_TIMEOUT_MILLISECONDS,
+		},
+	);
 }
 
 async function expectConstraintViolation(
@@ -352,18 +360,24 @@ describe('platform administrator database foundation', () => {
 		const email = 'ineza.marie@example.com';
 
 		await expect(
-			prisma.$transaction(async (transaction) => {
-				const user = await transaction.user.create({
-					data: { email, displayName: 'Marie Ineza' },
-				});
-				await transaction.passwordCredential.create({
-					data: { userId: user.id, passwordHash: FICTIONAL_PASSWORD_HASH },
-				});
-				await transaction.platformStaff.create({
-					data: { userId: user.id, status: PlatformStaffStatus.PENDING },
-				});
-				throw rollbackError;
-			}),
+			prisma.$transaction(
+				async (transaction) => {
+					const user = await transaction.user.create({
+						data: { email, displayName: 'Marie Ineza' },
+					});
+					await transaction.passwordCredential.create({
+						data: { userId: user.id, passwordHash: FICTIONAL_PASSWORD_HASH },
+					});
+					await transaction.platformStaff.create({
+						data: { userId: user.id, status: PlatformStaffStatus.PENDING },
+					});
+					throw rollbackError;
+				},
+				{
+					maxWait: TRANSACTION_MAX_WAIT_MILLISECONDS,
+					timeout: TRANSACTION_TIMEOUT_MILLISECONDS,
+				},
+			),
 		).rejects.toBe(rollbackError);
 
 		expect(await prisma.user.findUnique({ where: { email } })).toBeNull();
