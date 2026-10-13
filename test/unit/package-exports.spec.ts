@@ -13,5 +13,18 @@ describe('public package exports', () => {
 			SUSPENDED: 'SUSPENDED',
 			ARCHIVED: 'ARCHIVED',
 		});
+		expect(databasePackage.OrganizationAuditAction).toEqual({
+			CREATE: 'CREATE',
+			UPDATE: 'UPDATE',
+			ACTIVATE: 'ACTIVATE',
+			SUSPEND: 'SUSPEND',
+		});
+		expect(databasePackage.PlatformAuthorizationAuditAction).toEqual({
+			PROVISION_ORGANIZATION_MANAGER: 'PROVISION_ORGANIZATION_MANAGER',
+		});
+		expect(databasePackage.PlatformAuthorizationAuditOutcome).toEqual({
+			GRANTED: 'GRANTED',
+			ALREADY_GRANTED: 'ALREADY_GRANTED',
+		});
 	});
 });
