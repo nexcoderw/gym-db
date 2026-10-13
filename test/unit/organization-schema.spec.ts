@@ -5,9 +5,13 @@ describe('organization schema contract', () => {
 		const schema = await readFile(new URL('../../prisma/schema.prisma', import.meta.url), 'utf8');
 		const model = /model Organization \{[\s\S]*?\n\}/u.exec(schema)?.[0];
 		expect(model).toBeDefined();
-		expect(model).toMatch(/id\s+String\s+@id\(map: "organizations_pkey"\) @default\(uuid\(\)\) @db\.Uuid/u);
+		expect(model).toMatch(
+			/id\s+String\s+@id\(map: "organizations_pkey"\) @default\(uuid\(\)\) @db\.Uuid/u,
+		);
 		expect(model).toMatch(/name\s+String\s+@db\.VarChar\(160\)/u);
-		expect(model).toMatch(/slug\s+String\s+@unique\(map: "organizations_slug_key"\) @db\.VarChar\(63\)/u);
+		expect(model).toMatch(
+			/slug\s+String\s+@unique\(map: "organizations_slug_key"\) @db\.VarChar\(63\)/u,
+		);
 		expect(model).toMatch(/status\s+OrganizationStatus\s+@default\(PENDING\)/u);
 		expect(model).toContain('@@map("organizations")');
 		expect(model).toContain('@@index([status, createdAt(sort: Desc), id]');
@@ -24,7 +28,9 @@ describe('organization schema contract', () => {
 		expect(status).toContain('@@map("organization_status")');
 		const model = /model Organization \{[\s\S]*?\n\}/u.exec(schema)?.[0];
 		for (const field of ['activatedAt', 'suspendedAt', 'archivedAt']) {
-			expect(model).toMatch(new RegExp(`${field}\\s+DateTime\\?[^\\n]+@db\\.Timestamptz\\(6\\)`, 'u'));
+			expect(model).toMatch(
+				new RegExp(`${field}\\s+DateTime\\?[^\\n]+@db\\.Timestamptz\\(6\\)`, 'u'),
+			);
 		}
 		expect(model).toMatch(/createdAt\s+DateTime\s+@default\(now\(\)\)/u);
 		expect(model).toMatch(/updatedAt\s+DateTime\s+@updatedAt/u);
