@@ -38,11 +38,24 @@ email, billing orchestration, and user-facing DTOs. The API must not carry a sch
 
 ## Environment
 
-Copy `.env.local.example` to `.env.local` and replace only with non-production credentials.
+Use separate ignored files for each workflow. Copy only the templates you need and replace their
+placeholders with independently provisioned, non-production credentials:
+
+| Local file              | Consumer                                                | Contents                                                                                                 |
+| ----------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `.env.local`            | Application runtime; integration-test target comparison | Runtime `DATABASE_URL` only                                                                              |
+| `.env.migrations.local` | Prisma CLI                                              | `DIRECT_DATABASE_URL`, CLI fallback `DATABASE_URL`, `SHADOW_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL` |
+| `.env.test.local`       | `npm run test:integration`                              | Restricted `TEST_DATABASE_URL`, marker, password-free migration/shadow reference URLs                    |
+
+Matching `.example` files are tracked; real files must stay ignored and mode `600`. Do not source
+these files in a shell: Node/dotenv parse URL query strings and password characters as data.
+Never load `.env.migrations.local` into Jest or an application. Reference-only URLs in `.env.test.local`
+retain the real migration/shadow host, port, database and username, but contain no password. Update
+those references if you change a migration target; they preserve the existing isolation comparisons.
 
 | Variable                         | Required by                | Description                                      |
 | -------------------------------- | -------------------------- | ------------------------------------------------ |
-| `DATABASE_URL`                   | runtime and CLI fallback   | Runtime PostgreSQL application-role URL          |
+| `DATABASE_URL`                   | runtime or CLI fallback    | Role depends on the workflow file, never shared  |
 | `DIRECT_DATABASE_URL`            | migration CLI when pooled  | Direct migration-role URL; preferred for DDL     |
 | `SHADOW_DATABASE_URL`            | local migration generation | Disposable development shadow database           |
 | `DATABASE_POOL_MAX`              | runtime, optional          | Positive per-process pool limit; default `10`    |
@@ -60,9 +73,17 @@ All commands in this repository are human-operated. From `api/db`:
 
 ```bash
 npm install
-set -a
-source .env.local
-set +a
+cp .env.local.example .env.local
+cp .env.migrations.local.example .env.migrations.local
+cp .env.test.local.example .env.test.local
+chmod 600 .env.local .env.migrations.local .env.test.local
+```
+
+Do not copy over existing files. Fill in the reviewed targets and independently provision the test
+marker/role before continuing. Existing installations should move values, not regenerate credentials
+or markers. Prisma now loads only `.env.migrations.local`, never `.env.local` or `.env`.
+
+```bash
 npm run prisma:generate
 npm run prisma:format
 npm run prisma:validate
@@ -74,6 +95,28 @@ npm run test:integration
 npm run build
 npm pack --dry-run
 ```
+
+To apply existing reviewed migrations to the integration-test database only:
+
+```bash
+npm run migration:test:deploy
+npm run test:integration
+```
+
+`migration:test:deploy` uses `TEST_MIGRATION_DATABASE_URL` through `prisma.test.config.ts` and does not
+configure a shadow database. It never runs automatically before tests. For normal reviewed migration
+deployment use `npm run migration:deploy`; for create-only development migrations use
+`npm run migration:create -- --name descriptive_change`. Confirm the printed database target before
+continuing. Never use a production or application database as the disposable test target.
+
+Node/dotenv preserve already exported shell values. Start a fresh terminal or unset conflicting
+database variables before using local profiles; a file is not an override for managed secrets.
+`npm test` and `npm run test:integration` explicitly load the local runtime/test files;
+`npm run test:unit` needs no database profile.
+Production CLI operations receive managed environment values and must not ship these local files.
+CI/managed integration tests use `npm run test:integration:managed` with externally supplied runtime
+reference URLs, restricted test credentials and marker; it loads no local profiles and performs the
+same live safety checks.
 
 `npm install` must regenerate `package-lock.json` after dependency edits. Prisma generation must happen
 before type-checking, tests, or builds because generated sources are intentionally not committed.
