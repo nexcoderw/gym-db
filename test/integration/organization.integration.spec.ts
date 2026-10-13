@@ -4,7 +4,10 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { DatabaseModule } from '../../src/database/database.module.js';
 import { PrismaService } from '../../src/database/prisma.service.js';
 import { OrganizationStatus } from '../../src/index.js';
-import { OrganizationTestFixtures, type OrganizationFixture } from './organization-test-fixtures.js';
+import {
+	OrganizationTestFixtures,
+	type OrganizationFixture,
+} from './organization-test-fixtures.js';
 import {
 	loadTestDatabaseSafetyConfig,
 	verifyTestDatabaseSafety,
@@ -68,7 +71,33 @@ describe('organization database foundation', () => {
 		}).compile();
 		await module.init();
 		prisma = module.get(PrismaService);
-		verified = await verifyTestDatabaseSafety(prisma, safety);
+		const verifiedDatabase = await verifyTestDatabaseSafety(prisma, safety);
+		const readiness = await prisma.$queryRaw<
+			{ table_exists: boolean; validated_checks: number }[]
+		>`
+			SELECT to_regclass('public.organizations') IS NOT NULL AS table_exists,
+				(SELECT count(*)::integer FROM pg_catalog.pg_constraint
+				 WHERE conrelid = to_regclass('public.organizations') AND contype = 'c'
+				 AND convalidated AND conname IN (
+					'organizations_name_nonblank_check',
+					'organizations_slug_format_check',
+					'organizations_slug_reserved_check'
+				 )) AS validated_checks
+		`;
+		const schema = readiness[0];
+		if (
+			readiness.length !== 1 ||
+			schema === undefined ||
+			!schema.table_exists ||
+			schema.validated_checks !== 3
+		) {
+			throw new Error(
+				'Organization integration prerequisites are missing: apply the reviewed organization ' +
+					'migration with all three validated CHECK constraints to the verified test database.',
+			);
+		}
+		// Enable fixture teardown only after both target safety and schema readiness succeed.
+		verified = verifiedDatabase;
 	});
 
 	beforeEach(() => {
@@ -114,7 +143,9 @@ describe('organization database foundation', () => {
 		const fixture = reserve();
 		const start = Date.now();
 		const row = await prisma.organization.create({ data: { ...fixture, name: 'Soho Gym' } });
-		expect(row.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+		expect(row.id).toMatch(
+			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+		);
 		expect(row.slug).toBe(fixture.slug);
 		expect(row.status).toBe(OrganizationStatus.PENDING);
 		expect(row.createdAt.getTime()).toBeGreaterThanOrEqual(start - 60_000);
@@ -126,18 +157,17 @@ describe('organization database foundation', () => {
 		expect(await prisma.user.findUnique({ where: { id: row.id } })).toBeNull();
 		expect(await prisma.platformStaff.findUnique({ where: { id: row.id } })).toBeNull();
 		// Check the Prisma default separately from fixtures that reserve an explicit UUID for cleanup.
-		const generated = await prisma.$transaction(
-			async (transaction) => {
-				const result = await transaction.organization.create({
-					data: { name: 'Soho Gym', slug: reserve().slug },
-				});
-				fixtures.track(requireVerified(), result);
-				await transaction.organization.delete({ where: { id: result.id } });
-				return result;
-			},
-			transactionOptions,
+		const generated = await prisma.$transaction(async (transaction) => {
+			const result = await transaction.organization.create({
+				data: { name: 'Soho Gym', slug: reserve().slug },
+			});
+			fixtures.track(requireVerified(), result);
+			await transaction.organization.delete({ where: { id: result.id } });
+			return result;
+		}, transactionOptions);
+		expect(generated.id).toMatch(
+			/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
 		);
-		expect(generated.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
 		expect(generated.id).not.toBe(row.id);
 	});
 
@@ -187,7 +217,9 @@ describe('organization database foundation', () => {
 	});
 
 	it.each(RESERVED_SLUGS)('rejects reserved infrastructure slug: %s', async (slug) => {
-		await expect(insertRaw(reserve(slug), 'Kigali Fitness')).rejects.toThrow('organizations_slug_reserved_check');
+		await expect(insertRaw(reserve(slug), 'Kigali Fitness')).rejects.toThrow(
+			'organizations_slug_reserved_check',
+		);
 	});
 
 	it('accepts the shortest and longest permitted ASCII slugs', async () => {
@@ -308,19 +340,15 @@ describe('organization database foundation', () => {
 			SELECT indexname AS name, indexdef AS definition FROM pg_catalog.pg_indexes
 			WHERE schemaname = 'public' AND tablename = 'organizations'
 		`;
-		expect(indexes).toEqual(
-			expect.arrayContaining([
-				expect.objectContaining({ name: 'organizations_pkey' }),
-				expect.objectContaining({
-					name: 'organizations_slug_key',
-					definition: expect.stringContaining('UNIQUE INDEX'),
-				}),
-				expect.objectContaining({
-					name: 'organizations_status_created_at_id_idx',
-					definition: expect.stringContaining('(status, created_at DESC, id)'),
-				}),
-			]),
+		expect(indexes.some((index) => index.name === 'organizations_pkey')).toBe(true);
+		const slugIndex = indexes.find((index) => index.name === 'organizations_slug_key');
+		expect(slugIndex).toBeDefined();
+		expect(slugIndex?.definition).toContain('UNIQUE INDEX');
+		const administrationIndex = indexes.find(
+			(index) => index.name === 'organizations_status_created_at_id_idx',
 		);
+		expect(administrationIndex).toBeDefined();
+		expect(administrationIndex?.definition).toContain('(status, created_at DESC, id)');
 		const identities = await prisma.$queryRaw<{ users: string | null; staff: string | null }[]>`
 			SELECT to_regclass('public.users')::text AS users,
 				to_regclass('public.platform_staff')::text AS staff
