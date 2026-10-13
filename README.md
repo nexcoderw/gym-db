@@ -41,11 +41,11 @@ email, billing orchestration, and user-facing DTOs. The API must not carry a sch
 Use separate ignored files for each workflow. Copy only the templates you need and replace their
 placeholders with independently provisioned, non-production credentials:
 
-| Local file              | Consumer                                                | Contents                                                                                                 |
-| ----------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `.env.local`            | Application runtime; integration-test target comparison | Runtime `DATABASE_URL` only                                                                              |
-| `.env.migrations.local` | Prisma CLI                                              | `DIRECT_DATABASE_URL`, `SHADOW_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL` |
-| `.env.test.local`       | `npm run test:integration`                              | Restricted `TEST_DATABASE_URL`, marker, password-free migration/shadow reference URLs                    |
+| Local file              | Consumer                                                | Contents                                                                              |
+| ----------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `.env.local`            | Application runtime; integration-test target comparison | Runtime `DATABASE_URL` only                                                           |
+| `.env.migrations.local` | Prisma CLI                                              | `DIRECT_DATABASE_URL`, `SHADOW_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL`           |
+| `.env.test.local`       | `npm run test:integration`                              | Restricted `TEST_DATABASE_URL`, marker, password-free migration/shadow reference URLs |
 
 Matching `.example` files are tracked; real files must stay ignored and mode `600`. Do not source
 these files in a shell: Node/dotenv parse URL query strings and password characters as data.
