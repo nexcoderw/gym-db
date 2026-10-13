@@ -6,6 +6,23 @@ It is a package consumed by `gym-api`; it is not a public server and contains no
 
 ## Architecture
 
+### Email verification expansion (pending human migration review)
+
+`PlatformMfaChallenge` now defines nullable email OTP digest/expiry/send timestamps and a send
+counter defaulting to zero. These fields store no plaintext code or recipient. The API scopes keyed
+digests to challenge and verified mailbox, consumes codes transactionally, and bounds resends.
+Existing challenge records remain compatible with authenticator and recovery verification.
+
+From this package, the human runs `npm run prisma:format`, `npm run prisma:validate`, then
+`npm run migration:create -- --name add_platform_email_otp`. Review the resulting create-only SQL
+before deployment: it must add only the four challenge columns with appropriate nullability and
+the zero counter default, without dropping or rewriting existing authentication structures.
+Do not modify applied migrations. Deploy the reviewed expansion to the intended development and
+disposable test databases before starting the updated API. Regenerate Prisma and build this package
+so its local API consumer sees the new fields. Roll back application behavior by disabling email
+OTP, not by dropping fields or authentication data. No migration or generation was executed by
+an agent; the expansion is not deployed until the human confirms it.
+
 - Prisma 7 owns the canonical schema in `prisma/schema.prisma` and migration history in
   `prisma/migrations/`.
 - The `prisma-client` generator writes release-time sources to `src/generated/prisma/`. Those sources
