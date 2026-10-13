@@ -1,7 +1,8 @@
 import { config } from 'dotenv';
 import { defineConfig, env } from 'prisma/config';
 
-config({ path: ['.env.local', '.env'] });
+// CLI credentials are deliberately separate from application and test credentials.
+config({ path: '.env.migrations.local' });
 
 const migrationDatabaseUrl = process.env.DIRECT_DATABASE_URL ?? env('DATABASE_URL');
 const shadowDatabaseUrl = process.env.SHADOW_DATABASE_URL;
