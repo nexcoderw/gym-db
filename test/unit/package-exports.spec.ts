@@ -7,5 +7,11 @@ describe('public package exports', () => {
 		expect(typeof databasePackage.PrismaService).toBe('function');
 		expect(typeof databasePackage.TenantTransactionService).toBe('function');
 		expect(typeof databasePackage.loadDatabaseConfig).toBe('function');
+		expect(databasePackage.OrganizationStatus).toEqual({
+			PENDING: 'PENDING',
+			ACTIVE: 'ACTIVE',
+			SUSPENDED: 'SUSPENDED',
+			ARCHIVED: 'ARCHIVED',
+		});
 	});
 });
