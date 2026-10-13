@@ -203,7 +203,9 @@ describe('platform authentication persistence', () => {
 		];
 		await prisma.platformAdminSession.createMany({ data: sessions });
 
-		expect(await prisma.platformAdminSession.count({ where: { platformStaffId: staff.id } })).toBe(3);
+		expect(await prisma.platformAdminSession.count({ where: { platformStaffId: staff.id } })).toBe(
+			3,
+		);
 		expect(
 			await prisma.platformAdminSession.count({
 				where: {
@@ -270,10 +272,7 @@ describe('platform authentication persistence', () => {
 				id: credential.id,
 				verifiedAt: { not: null },
 				disabledAt: null,
-				OR: [
-					{ lastAcceptedTimeStep: null },
-					{ lastAcceptedTimeStep: { lt: acceptedTimeStep } },
-				],
+				OR: [{ lastAcceptedTimeStep: null }, { lastAcceptedTimeStep: { lt: acceptedTimeStep } }],
 			},
 			data: { lastAcceptedTimeStep: acceptedTimeStep, lastUsedAt: verifiedAt },
 		});
@@ -282,10 +281,7 @@ describe('platform authentication persistence', () => {
 				id: credential.id,
 				verifiedAt: { not: null },
 				disabledAt: null,
-				OR: [
-					{ lastAcceptedTimeStep: null },
-					{ lastAcceptedTimeStep: { lt: acceptedTimeStep } },
-				],
+				OR: [{ lastAcceptedTimeStep: null }, { lastAcceptedTimeStep: { lt: acceptedTimeStep } }],
 			},
 			data: { lastAcceptedTimeStep: acceptedTimeStep, lastUsedAt: verifiedAt },
 		});
@@ -377,7 +373,9 @@ describe('platform authentication persistence', () => {
 				},
 			});
 
-		await expect(eligibleChallenge(activeDigest)).resolves.toMatchObject({ tokenDigest: activeDigest });
+		await expect(eligibleChallenge(activeDigest)).resolves.toMatchObject({
+			tokenDigest: activeDigest,
+		});
 		await expect(eligibleChallenge(fixtureDigest('challenge.expired'))).resolves.toBeNull();
 		await expect(eligibleChallenge(fixtureDigest('challenge.consumed'))).resolves.toBeNull();
 		await expect(eligibleChallenge(fixtureDigest('challenge.exhausted'))).resolves.toBeNull();
@@ -411,7 +409,10 @@ describe('platform authentication persistence', () => {
 			},
 		});
 
-		await expectConstraintViolation(prisma.platformStaff.delete({ where: { id: staff.id } }), 'P2003');
+		await expectConstraintViolation(
+			prisma.platformStaff.delete({ where: { id: staff.id } }),
+			'P2003',
+		);
 	});
 
 	it('rolls back platform authentication records together', async () => {
@@ -450,7 +451,9 @@ describe('platform authentication persistence', () => {
 			),
 		).rejects.toBe(rollbackError);
 
-		await expect(prisma.platformAdminSession.findUnique({ where: { id: sessionId } })).resolves.toBeNull();
+		await expect(
+			prisma.platformAdminSession.findUnique({ where: { id: sessionId } }),
+		).resolves.toBeNull();
 		await expect(
 			prisma.platformMfaChallenge.findUnique({ where: { id: challengeId } }),
 		).resolves.toBeNull();
