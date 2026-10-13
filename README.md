@@ -288,9 +288,10 @@ console, internal, health, metrics, production, development and bootstrap. It is
 allocation, not a complete prediction of future infrastructure. New reserved names require a
 reviewed migration and a preflight for existing organizations; never silently steal a held slug.
 
-Schema uniqueness and the enum do not enforce name/slug checks. **No organization migration has
-been generated or applied for this change.** After the human generates the draft, review and approve
-these exact additions in that new, unapplied SQL, together with the generated table/type/index DDL:
+Schema uniqueness and the enum do not enforce name/slug checks. The human-generated migration
+`20261013195500_create_organizations` creates the table/type/indexes without the checks below and
+has already been applied to a database. Preserve that file unchanged. Review and approve these
+additions in a new, unapplied forward migration; do not rewrite applied history:
 
 ```sql
 ALTER TABLE public.organizations
@@ -356,6 +357,28 @@ branch-to-organization consistency when branches are later added.
 
 ### Human-controlled migration and verification gate
 
+For the already-applied initial organization migration, first inspect the status of both the normal
+development target and the configured disposable test target. A generated client does not create
+database tables, and application and test profiles may select different databases:
+
+```bash
+npm run migration:status
+npx prisma migrate status --config prisma.test.config.ts
+```
+
+Generate a new SQL-only draft using the same separately provisioned shadow database:
+
+```bash
+npm run migration:create -- --name harden_organization_constraints
+```
+
+Create-only supports an empty migration when the Prisma schema has no changes. Do not accept a reset
+prompt if drift is reported; stop and review the target/history. Send the new migration.sql for review
+before it is populated or deployed. Existing rows must satisfy all checks before adding them; conflicts
+require separately reviewed correction, not silent renaming or deletion. The initial organization
+migration remains unchanged, including on databases where it is still pending. The commands below
+for create_organizations describe the original creation workflow, not a request to repeat it.
+
 From `api/db`, confirm `.env.migrations.local` selects the direct migration role on the intended
 development database and a separate disposable shadow database. Shell variables take precedence
 over dotenv; remove stale exports before running these commands. Never print connection credentials.
@@ -410,7 +433,10 @@ Organization integration tests verify the live database safety marker before fix
 gym names, reserve UUIDs/slugs before writes (and track generated UUIDs before commit), and delete only
 exact tracked ID/slug pairs. They cover defaults, length/Unicode/blank checks, every reserved slug,
 duplicate/concurrent/archived uniqueness, enum/lifecycle persistence, rollback, mapped catalog objects
-and sentinel preservation. Existing platform suites remain regression coverage. Missing constraints,
+and sentinel preservation. Suite setup also checks that the organization table and all three named,
+validated constraints exist before enabling fixtures or cleanup, so missing migrations fail setup
+instead of issuing repeated writes/deletes against an absent table. Existing platform suites remain
+regression coverage. Missing constraints,
 migrations, generated exports, marker or role grants are failures, not reasons to skip checks.
 
 Do not deploy to development/production or publish based on authored tests alone. After successful
