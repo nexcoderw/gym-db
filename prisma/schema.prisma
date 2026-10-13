@@ -34,6 +34,28 @@ enum OrganizationStatus {
   @@map("organization_status")
 }
 
+enum OrganizationAuditAction {
+  CREATE   @map("create")
+  UPDATE   @map("update")
+  ACTIVATE @map("activate")
+  SUSPEND  @map("suspend")
+
+  @@map("organization_audit_action")
+}
+
+enum PlatformAuthorizationAuditAction {
+  PROVISION_ORGANIZATION_MANAGER @map("provision_organization_manager")
+
+  @@map("platform_authorization_audit_action")
+}
+
+enum PlatformAuthorizationAuditOutcome {
+  GRANTED         @map("granted")
+  ALREADY_GRANTED @map("already_granted")
+
+  @@map("platform_authorization_audit_outcome")
+}
+
 /// Platform-managed tenant root, not a tenant-owned child or an authorization grant.
 /// Slug grammar, reserved names and nonblank names require reviewed SQL CHECK constraints.
 /// Lifecycle timestamps record the latest corresponding transition; status remains authoritative.
@@ -47,6 +69,7 @@ model Organization {
   archivedAt  DateTime?          @map("archived_at") @db.Timestamptz(6)
   createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  auditEvents OrganizationAuditEvent[]
 
   @@index([status, createdAt(sort: Desc), id], map: "organizations_status_created_at_id_idx")
   @@map("organizations")
@@ -98,6 +121,8 @@ model PlatformStaff {
   totpCredential PlatformTotpCredential?
   recoveryCodes  PlatformRecoveryCode[]
   mfaChallenges  PlatformMfaChallenge[]
+  organizationAuditEvents OrganizationAuditEvent[]
+  authorizationAuditEvents PlatformAuthorizationAuditEvent[]
 
   @@index([status], map: "platform_staff_status_idx")
   @@map("platform_staff")
@@ -185,6 +210,7 @@ model PlatformRole {
   updatedAt   DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
   staff       PlatformStaffRole[]
   permissions PlatformRolePermission[]
+  authorizationAuditEvents PlatformAuthorizationAuditEvent[]
 
   @@map("platform_roles")
 }
@@ -222,4 +248,59 @@ model PlatformRolePermission {
   @@id([platformRoleId, platformPermissionId], map: "platform_role_permissions_pkey")
   @@index([platformPermissionId], map: "platform_role_permissions_permission_id_idx")
   @@map("platform_role_permissions")
+}
+
+/// Successful platform mutations only. SQL checks enforce action-specific metadata; reviewed
+/// grants deny routine UPDATE/DELETE. Restrictive references intentionally block parent deletion.
+/// A reviewed BEFORE INSERT trigger controls recordedAt even when a writer supplies a value.
+model OrganizationAuditEvent {
+  id                   String                  @id(map: "organization_audit_events_pkey") @default(uuid()) @db.Uuid
+  organizationId       String                  @map("organization_id") @db.Uuid
+  actorPlatformStaffId String                  @map("actor_platform_staff_id") @db.Uuid
+  requestId            String                  @map("request_id") @db.VarChar(128)
+  action               OrganizationAuditAction
+  previousStatus       OrganizationStatus?     @map("previous_status")
+  resultingStatus      OrganizationStatus      @map("resulting_status")
+  changedFields        String[]                @map("changed_fields") @db.VarChar(32)
+  previousName         String?                 @map("previous_name") @db.VarChar(160)
+  resultingName        String?                 @map("resulting_name") @db.VarChar(160)
+  occurredAt           DateTime                @map("occurred_at") @db.Timestamptz(6)
+  recordedAt           DateTime                @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  organization         Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_audit_events_organization_fkey")
+  actorPlatformStaff   PlatformStaff           @relation(fields: [actorPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_audit_events_actor_fkey")
+
+  @@index([organizationId, recordedAt(sort: Desc), id], map: "organization_audit_events_organization_time_idx")
+  @@index([actorPlatformStaffId, recordedAt(sort: Desc), id], map: "organization_audit_events_actor_time_idx")
+  @@index([recordedAt, id], map: "organization_audit_events_recorded_time_idx")
+  @@index([requestId], map: "organization_audit_events_request_idx")
+  @@map("organization_audit_events")
+}
+
+/// Narrow audit for approved organization-manager provisioning, not arbitrary authorization JSON.
+/// The INSERT trigger derives database/operator identities from the actual connection, not input.
+/// grantedPermissionKeys is empty only when the exact assignment already exists; no failed grant
+/// is recorded as committed success. Role/staff deletion is restricted while history references it.
+model PlatformAuthorizationAuditEvent {
+  id                    String                            @id(map: "platform_authorization_audit_events_pkey") @default(uuid()) @db.Uuid
+  action                PlatformAuthorizationAuditAction
+  targetPlatformStaffId String                            @map("target_platform_staff_id") @db.Uuid
+  targetPlatformRoleId  String                            @map("target_platform_role_id") @db.Uuid
+  approvedPermissionKeys String[]                         @map("approved_permission_keys") @db.VarChar(80)
+  grantedPermissionKeys String[]                          @map("granted_permission_keys") @db.VarChar(80)
+  operatorSessionRole   String                            @default(dbgenerated("SESSION_USER")) @map("operator_session_role") @db.VarChar(63)
+  operatorDatabaseRole  String                            @default(dbgenerated("CURRENT_USER")) @map("operator_database_role") @db.VarChar(63)
+  databaseName          String                            @default(dbgenerated("CURRENT_DATABASE()")) @map("database_name") @db.VarChar(63)
+  approvalReference     String                            @map("approval_reference") @db.VarChar(120)
+  correlationId         String                            @map("correlation_id") @db.Uuid
+  outcome               PlatformAuthorizationAuditOutcome
+  occurredAt            DateTime                          @map("occurred_at") @db.Timestamptz(6)
+  recordedAt            DateTime                          @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  targetPlatformStaff   PlatformStaff                     @relation(fields: [targetPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "platform_authorization_audit_events_staff_fkey")
+  targetPlatformRole    PlatformRole                      @relation(fields: [targetPlatformRoleId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "platform_authorization_audit_events_role_fkey")
+
+  @@index([targetPlatformStaffId, recordedAt(sort: Desc), id], map: "platform_authorization_audit_events_staff_time_idx")
+  @@index([targetPlatformRoleId, recordedAt(sort: Desc), id], map: "platform_authorization_audit_events_role_time_idx")
+  @@index([recordedAt, id], map: "platform_authorization_audit_events_recorded_time_idx")
+  @@index([correlationId], map: "platform_authorization_audit_events_correlation_idx")
+  @@map("platform_authorization_audit_events")
 }
