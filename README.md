@@ -44,7 +44,7 @@ placeholders with independently provisioned, non-production credentials:
 | Local file              | Consumer                                                | Contents                                                                                                 |
 | ----------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `.env.local`            | Application runtime; integration-test target comparison | Runtime `DATABASE_URL` only                                                                              |
-| `.env.migrations.local` | Prisma CLI                                              | `DIRECT_DATABASE_URL`, CLI fallback `DATABASE_URL`, `SHADOW_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL` |
+| `.env.migrations.local` | Prisma CLI                                              | `DIRECT_DATABASE_URL`, `SHADOW_DATABASE_URL`, `TEST_MIGRATION_DATABASE_URL` |
 | `.env.test.local`       | `npm run test:integration`                              | Restricted `TEST_DATABASE_URL`, marker, password-free migration/shadow reference URLs                    |
 
 Matching `.example` files are tracked; real files must stay ignored and mode `600`. Do not source
@@ -52,6 +52,28 @@ these files in a shell: Node/dotenv parse URL query strings and password charact
 Never load `.env.migrations.local` into Jest or an application. Reference-only URLs in `.env.test.local`
 retain the real migration/shadow host, port, database and username, but contain no password. Update
 those references if you change a migration target; they preserve the existing isolation comparisons.
+
+### Two Neon branches
+
+Use `development` for four separate PostgreSQL databases: `gym_dev` (everyday application),
+`gym_test` (integration fixtures), `gym_bootstrap_test` (API first-owner tests), and `gym_shadow`
+(Prisma scratch space). Use `production` only for `gym_prod`. Branch count does not determine database
+count: URLs on the same development endpoint remain isolated by their database names. Pooled and
+direct URLs to the same database are not separate environments. `NODE_ENV` never selects a branch.
+
+Use `gym_app` for application DML, `gym_migrator` for reviewed DDL, `gym_test` for integration-test DML,
+and separate `gym_bootstrap` / `gym_bootstrap_test` roles for operator and disposable bootstrap work.
+Create restricted roles with SQL rather than the Neon role-creation UI, and do not grant them
+administrative role membership. Provision database markers independently before tests or bootstrap.
+Production credentials and roles must be provisioned independently, not copied from development.
+
+Keep existing migrations and safety checks when replacing an empty Neon project. Apply the committed
+migrations to fresh databases; do not generate a replacement initial migration or use `db push`.
+Do not remove the old project until every real local profile points to the new endpoint and the
+human-operated checks pass. This repository never deletes remote projects automatically.
+
+The migration profile needs no duplicate `DATABASE_URL`: `DIRECT_DATABASE_URL` selects `gym_dev`.
+The CLI still accepts an externally supplied `DATABASE_URL` fallback for managed environments.
 
 | Variable                         | Required by                | Description                                      |
 | -------------------------------- | -------------------------- | ------------------------------------------------ |
