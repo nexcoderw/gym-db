@@ -6,6 +6,26 @@ async function readRootFile(name: string): Promise<string> {
 }
 
 describe('database workflow environment boundaries', () => {
+	it('separates development databases even when they share one endpoint', async () => {
+		const runtime = parseEnv(await readRootFile('.env.local.example'));
+		const migrations = parseEnv(await readRootFile('.env.migrations.local.example'));
+		const tests = parseEnv(await readRootFile('.env.test.local.example'));
+		const targets = [
+			[runtime.DATABASE_URL, '/gym_dev'],
+			[migrations.DIRECT_DATABASE_URL, '/gym_dev'],
+			[migrations.SHADOW_DATABASE_URL, '/gym_shadow'],
+			[migrations.TEST_MIGRATION_DATABASE_URL, '/gym_test'],
+			[tests.TEST_DATABASE_URL, '/gym_test'],
+		];
+		for (const [value, database] of targets) {
+			if (value === undefined) throw new Error('A development database target is missing.');
+			const url = new URL(value);
+			expect(url.hostname).toBe('localhost');
+			expect(url.pathname).toBe(database);
+		}
+		expect(migrations.DATABASE_URL).toBeUndefined();
+	});
+
 	it('keeps CLI and test credentials out of the runtime template', async () => {
 		const runtime = parseEnv(await readRootFile('.env.local.example'));
 		expect(Object.keys(runtime)).toEqual(['DATABASE_URL']);
