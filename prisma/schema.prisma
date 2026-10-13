@@ -25,6 +25,33 @@ enum PlatformStaffStatus {
   @@map("platform_staff_status")
 }
 
+enum OrganizationStatus {
+  PENDING   @map("pending")
+  ACTIVE    @map("active")
+  SUSPENDED @map("suspended")
+  ARCHIVED  @map("archived")
+
+  @@map("organization_status")
+}
+
+/// Platform-managed tenant root, not a tenant-owned child or an authorization grant.
+/// Slug grammar, reserved names and nonblank names require reviewed SQL CHECK constraints.
+/// Lifecycle timestamps record the latest corresponding transition; status remains authoritative.
+model Organization {
+  id          String             @id(map: "organizations_pkey") @default(uuid()) @db.Uuid
+  name        String             @db.VarChar(160)
+  slug        String             @unique(map: "organizations_slug_key") @db.VarChar(63)
+  status      OrganizationStatus @default(PENDING)
+  activatedAt DateTime?          @map("activated_at") @db.Timestamptz(6)
+  suspendedAt DateTime?          @map("suspended_at") @db.Timestamptz(6)
+  archivedAt  DateTime?          @map("archived_at") @db.Timestamptz(6)
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, createdAt(sort: Desc), id], map: "organizations_status_created_at_id_idx")
+  @@map("organizations")
+}
+
 /// Global login identity. An account has no platform privileges without an active PlatformStaff
 /// record and permissions obtained through explicit role assignments.
 model User {
@@ -59,18 +86,18 @@ model PasswordCredential {
 /// Explicit eligibility for NEXCODE platform administration. Active status alone grants nothing;
 /// authorization also requires effective permissions assigned through PlatformRole.
 model PlatformStaff {
-  id                   String                   @id @default(uuid()) @db.Uuid
-  userId               String                   @unique(map: "platform_staff_user_id_key") @map("user_id") @db.Uuid
-  status               PlatformStaffStatus
-  suspendedAt          DateTime?                @map("suspended_at") @db.Timestamptz(6)
-  createdAt            DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
-  user                 User                     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  roles                PlatformStaffRole[]
-  adminSessions        PlatformAdminSession[]
-  totpCredential       PlatformTotpCredential?
-  recoveryCodes        PlatformRecoveryCode[]
-  mfaChallenges        PlatformMfaChallenge[]
+  id             String                  @id @default(uuid()) @db.Uuid
+  userId         String                  @unique(map: "platform_staff_user_id_key") @map("user_id") @db.Uuid
+  status         PlatformStaffStatus
+  suspendedAt    DateTime?               @map("suspended_at") @db.Timestamptz(6)
+  createdAt      DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user           User                    @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  roles          PlatformStaffRole[]
+  adminSessions  PlatformAdminSession[]
+  totpCredential PlatformTotpCredential?
+  recoveryCodes  PlatformRecoveryCode[]
+  mfaChallenges  PlatformMfaChallenge[]
 
   @@index([status], map: "platform_staff_status_idx")
   @@map("platform_staff")
