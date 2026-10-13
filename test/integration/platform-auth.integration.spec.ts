@@ -76,9 +76,7 @@ describe('platform authentication persistence', () => {
 	});
 
 	afterAll(async () => {
-		if (module !== undefined) {
-			await module.close();
-		}
+		await module.close();
 	});
 
 	async function createActiveStaff(
