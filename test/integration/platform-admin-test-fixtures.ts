@@ -146,20 +146,14 @@ export class PlatformAdminTestFixtures {
 				if (passwordCredentialIds.length > 0 || userIds.length > 0) {
 					await transaction.passwordCredential.deleteMany({
 						where: {
-							OR: [
-								{ id: { in: passwordCredentialIds } },
-								{ userId: { in: userIds } },
-							],
+							OR: [{ id: { in: passwordCredentialIds } }, { userId: { in: userIds } }],
 						},
 					});
 				}
 				if (platformStaffIds.length > 0 || userIds.length > 0) {
 					await transaction.platformStaff.deleteMany({
 						where: {
-							OR: [
-								{ id: { in: platformStaffIds } },
-								{ userId: { in: userIds } },
-							],
+							OR: [{ id: { in: platformStaffIds } }, { userId: { in: userIds } }],
 						},
 					});
 				}
