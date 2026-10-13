@@ -489,9 +489,11 @@ describe('platform administrator database foundation', () => {
 		await fixtures.cleanup(prisma, requireVerifiedDatabase());
 
 		await expect(prisma.user.findUnique({ where: { id: ownedUserId } })).resolves.toBeNull();
-		await expect(prisma.user.findUnique({ where: { id: unrelatedUserId } })).resolves.toMatchObject({
-			id: unrelatedUserId,
-		});
+		await expect(prisma.user.findUnique({ where: { id: unrelatedUserId } })).resolves.toMatchObject(
+			{
+				id: unrelatedUserId,
+			},
+		);
 	});
 
 	it('cleans fixtures after setup stops with a partial relationship graph', async () => {
