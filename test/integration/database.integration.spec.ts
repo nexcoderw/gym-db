@@ -5,10 +5,7 @@ import { DatabaseModule } from '../../src/database/database.module.js';
 import { PrismaService } from '../../src/database/prisma.service.js';
 import { TenantTransactionService } from '../../src/database/tenant-transaction.service.js';
 import type { Prisma } from '../../src/generated/prisma/client.js';
-import {
-	loadTestDatabaseSafetyConfig,
-	verifyTestDatabaseSafety,
-} from './test-database-safety.js';
+import { loadTestDatabaseSafetyConfig, verifyTestDatabaseSafety } from './test-database-safety.js';
 
 interface TenantSettings {
 	readonly organizationId: string | null;
