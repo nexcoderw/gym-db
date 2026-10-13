@@ -1,8 +1,17 @@
 {
-	"useTabs": true,
-	"tabWidth": 2,
-	"printWidth": 100,
-	"singleQuote": true,
-	"semi": true,
-	"trailingComma": "all"
+  "useTabs": true,
+  "tabWidth": 2,
+  "printWidth": 100,
+  "singleQuote": true,
+  "semi": true,
+  "trailingComma": "all",
+  "overrides": [
+    {
+      "files": "*.{json,jsonc,yml,yaml,md,prisma}",
+      "options": {
+        "useTabs": false,
+        "tabWidth": 2
+      }
+    }
+  ]
 }
