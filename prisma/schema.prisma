@@ -193,6 +193,11 @@ model PlatformMfaChallenge {
   consumedAt      DateTime?     @map("consumed_at") @db.Timestamptz(6)
   failedAttempts  Int           @default(0) @map("failed_attempts")
   maxAttempts     Int           @default(5) @map("max_attempts")
+  /// Keyed digest scoped to this challenge and verified recipient; never store the plaintext OTP.
+  emailOtpDigest  String?       @map("email_otp_digest") @db.VarChar(128)
+  emailOtpExpiresAt DateTime?   @map("email_otp_expires_at") @db.Timestamptz(6)
+  emailOtpSentAt  DateTime?     @map("email_otp_sent_at") @db.Timestamptz(6)
+  emailOtpSendCount Int         @default(0) @map("email_otp_send_count")
   platformStaff   PlatformStaff @relation(fields: [platformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([platformStaffId, consumedAt, expiresAt], map: "platform_mfa_challenges_staff_active_idx")
