@@ -37,8 +37,13 @@ export interface VerifiedTestDatabase {
 	readonly [verifiedTestDatabase]: true;
 }
 
-export function assertTestDatabaseWasVerified(token: VerifiedTestDatabase): void {
-	if (token[verifiedTestDatabase] !== true) {
+export function assertTestDatabaseWasVerified(token: unknown): asserts token is VerifiedTestDatabase {
+	if (
+		typeof token !== 'object' ||
+		token === null ||
+		!(verifiedTestDatabase in token) ||
+		token[verifiedTestDatabase] !== true
+	) {
 		throw new Error('The integration-test database safety check has not completed.');
 	}
 }
@@ -173,7 +178,8 @@ export function assertConnectedTestDatabaseIsSafe(
 		throw new Error('The integration-test database user has unsafe administrative privileges.');
 	}
 
-	return Object.freeze({ [verifiedTestDatabase]: true });
+	const verifiedDatabase: VerifiedTestDatabase = { [verifiedTestDatabase]: true };
+	return Object.freeze(verifiedDatabase);
 }
 
 export async function verifyTestDatabaseSafety(
