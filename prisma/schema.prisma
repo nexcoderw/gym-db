@@ -185,20 +185,20 @@ model PlatformRecoveryCode {
 /// Short-lived pre-authentication MFA challenge. It grants no platform access and can become a
 /// session only through an authorized API flow after expiry, consumption, and attempt checks.
 model PlatformMfaChallenge {
-  id              String        @id @default(uuid()) @db.Uuid
-  platformStaffId String        @map("platform_staff_id") @db.Uuid
-  tokenDigest     String        @unique(map: "platform_mfa_challenges_token_digest_key") @map("token_digest") @db.VarChar(128)
-  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  expiresAt       DateTime      @map("expires_at") @db.Timestamptz(6)
-  consumedAt      DateTime?     @map("consumed_at") @db.Timestamptz(6)
-  failedAttempts  Int           @default(0) @map("failed_attempts")
-  maxAttempts     Int           @default(5) @map("max_attempts")
+  id                String        @id @default(uuid()) @db.Uuid
+  platformStaffId   String        @map("platform_staff_id") @db.Uuid
+  tokenDigest       String        @unique(map: "platform_mfa_challenges_token_digest_key") @map("token_digest") @db.VarChar(128)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt         DateTime      @map("expires_at") @db.Timestamptz(6)
+  consumedAt        DateTime?     @map("consumed_at") @db.Timestamptz(6)
+  failedAttempts    Int           @default(0) @map("failed_attempts")
+  maxAttempts       Int           @default(5) @map("max_attempts")
   /// Keyed digest scoped to this challenge and verified recipient; never store the plaintext OTP.
-  emailOtpDigest  String?       @map("email_otp_digest") @db.VarChar(128)
-  emailOtpExpiresAt DateTime?   @map("email_otp_expires_at") @db.Timestamptz(6)
-  emailOtpSentAt  DateTime?     @map("email_otp_sent_at") @db.Timestamptz(6)
-  emailOtpSendCount Int         @default(0) @map("email_otp_send_count")
-  platformStaff   PlatformStaff @relation(fields: [platformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  emailOtpDigest    String?       @map("email_otp_digest") @db.VarChar(128)
+  emailOtpExpiresAt DateTime?     @map("email_otp_expires_at") @db.Timestamptz(6)
+  emailOtpSentAt    DateTime?     @map("email_otp_sent_at") @db.Timestamptz(6)
+  emailOtpSendCount Int           @default(0) @map("email_otp_send_count")
+  platformStaff     PlatformStaff @relation(fields: [platformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([platformStaffId, consumedAt, expiresAt], map: "platform_mfa_challenges_staff_active_idx")
   @@index([expiresAt], map: "platform_mfa_challenges_expires_at_idx")
