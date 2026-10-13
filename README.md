@@ -449,8 +449,332 @@ Do not deploy to development/production or publish based on authored tests alone
 disposable verification, obtain explicit approval for each target and follow expansion deployment
 order before consumer rollout. Stop on drift or failed migration; review applied state and use a
 forward fix rather than rewriting applied history or dropping a table containing organization data.
-Branches, memberships/owners, staff, members, subscriptions, payments, APIs, frontend, domain
-provisioning and lifecycle workflows remain deferred. Step 11 is not started.
+Branches, memberships/owners, gym staff, members, subscriptions, payments, frontend and domain
+provisioning remain deferred. The Step 11 API exists separately in gym-api; its mutation provider
+remains fail-closed until the Step 12 database contract, privileges and API implementation are verified.
+
+## Durable organization audit — Step 12 database review checkpoint
+
+### Actual repository history and current implementation status
+
+The inspected history is `c169ddf` (gym-db) and `9493a57` (gym-api). Both
+`20261013203346_harden_organization_constraints` **and**
+`20261013204701_enforce_organization_integrity` contain only an empty-migration comment.
+Neither enforces organization integrity. Preserve both, plus the already-applied
+`20261013195500_create_organizations`, unchanged. The applied state of the newer empty draft is not
+known from repository files; do not infer it or replace its checksum. This section supersedes the
+older SQL-only draft-generation instructions above for the current Step 12 workflow.
+
+Phase A proposes two additive models and tests. **No migration has been generated, reviewed or
+deployed for this proposal; no checks have been executed.** The API is deliberately unchanged at this
+checkpoint: no write enablement, permission assignment, CLI execution, owner-role change or frontend
+change. After the generated SQL is reviewed and the public contract is confirmed, Phase B implements
+the supplied-transaction audit provider and a separate operator-only provisioning CLI.
+
+`OrganizationAuditEvent` maps to `organization_audit_events`: required organization/actor foreign
+keys, request ID (1–128 ASCII correlation characters), action, previous/resulting lifecycle state,
+action-specific changed fields, bounded prior/resulting names, occurredAt and database-controlled
+recordedAt. CREATE maps to `create`, UPDATE to `update`, ACTIVATE to `activate`, SUSPEND to `suspend`.
+Names are included only for creation/renaming; lifecycle metadata does not copy request bodies.
+Indexes lead with organization or actor and recordedAt/id; additional recorded-time and request-ID
+indexes support controlled investigation/export. These records are platform-managed, not tenant
+authorization or a public query interface.
+
+`PlatformAuthorizationAuditEvent` maps to `platform_authorization_audit_events`: required target
+staff/role references, one action (`provision_organization_manager`), exact approved permission keys,
+actual newly granted keys, authenticated session/effective database role, connected database name,
+approval reference (2–120 ASCII change-reference characters), UUID correlation, occurredAt/recordedAt
+and outcome (`granted` or `already_granted`). An already-granted outcome has no newly granted keys.
+Target staff/role are subjects, not proof of operator authentication. The stamping trigger overwrites
+caller identity/timestamp claims with values from the actual connection. This verifies the DB login,
+not the individual human using shared credentials: production needs individually attributable
+operator access, secret-manager access logs and independently approved change tickets.
+
+All four new FKs use RESTRICT on deletion/update. Organizations, staff and roles with history cannot
+be silently cascade-deleted. No updatedAt, arbitrary JSON, tokens, password material, MFA codes,
+cookies, headers, session identifiers or unbounded payloads are introduced. UUID defaults remain
+Prisma-managed; raw writers must supply their UUIDs. recordedAt defaults alone are insufficient:
+the reviewed INSERT triggers below are required to prevent caller-supplied clocks/identities.
+
+### Human preflight: no deployment yet
+
+Confirm `.env.migrations.local` selects the intended **development** branch's direct gym_migrator
+connection to gym_dev, with gym_shadow as a different database. gym_test is disposable, not the daily
+application database. Neon branch names are not database identity checks; verify the SQL result.
+From `api/db`, inspect migration status without sharing passwords:
+
+```bash
+npm run migration:status
+npx prisma migrate status --config prisma.test.config.ts
+```
+
+In Neon SQL Editor, explicitly select development / gym_dev and inspect:
+
+```sql
+SELECT current_database(), current_user;
+SELECT migration_name, finished_at, rolled_back_at
+FROM public._prisma_migrations ORDER BY started_at;
+SELECT conname, convalidated, pg_get_constraintdef(oid)
+FROM pg_catalog.pg_constraint
+WHERE conrelid = to_regclass('public.organizations') ORDER BY conname;
+
+-- Return only identifiers of rows requiring human review. Never rewrite or delete them automatically.
+SELECT id FROM public.organizations
+WHERE char_length(btrim(name,
+  U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+)) = 0 OR char_length(slug) NOT BETWEEN 3 AND 63
+OR NOT (slug COLLATE "C" ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$')
+OR slug IN (
+  'admin', 'api', 'app', 'www', 'auth', 'login', 'member', 'members',
+  'portal', 'dashboard', 'billing', 'support', 'status', 'static',
+  'assets', 'cdn', 'mail', 'dev', 'staging', 'test', 'localhost',
+  'account', 'accounts', 'oauth', 'console', 'internal', 'health',
+  'metrics', 'production', 'development', 'bootstrap'
+);
+```
+
+Stop on wrong target, unexpected history/check definitions or incompatible existing rows. Do not
+accept a Prisma reset, silently clean existing data, deploy an empty migration, or mark the old empty
+migration as enforcement. If checks already exist, review their actual definitions/history before
+deciding the new SQL; do not blindly add duplicate names or hide drift with IF NOT EXISTS.
+
+After preflight, the human runs:
+
+```bash
+cd /Users/dvniels/Desktop/projects/gym/api/db
+npm run prisma:format
+npm run prisma:validate
+npm run migration:create -- --name organization_integrity_and_audit
+```
+
+**STOP. Supply the newly generated migration.sql for review before any deployment.** Prisma generates
+the enum/table/index/FK DDL, not the custom checks, triggers or security grants. Do not apply the
+generated draft as-is. No agent-created timestamp or fabricated migration file is permitted.
+Review object ordering, additive DDL, named/restrictive FKs, no drops/renames of existing identity
+tables, existing rows, locks and target-specific role grants. The three organization CHECK additions
+and PUBLIC revocation in the earlier section must be included once, after confirming their absence.
+
+### Required custom SQL for the new, unapplied draft — review material only
+
+The following definitions belong **after** the generated audit tables/enums. They are not a separate
+migration or permission to execute SQL before review. Existing migration files are never edited.
+Array ordering is canonical and intentional, matching the proposed API event contract; no duplicates,
+NULL arrays/elements, arbitrary field names or extra permissions are accepted. SQL CHECK expressions
+use IS TRUE where nullable values could otherwise pass as UNKNOWN.
+
+```sql
+ALTER TABLE public.organization_audit_events
+  ADD CONSTRAINT organization_audit_events_request_check CHECK (
+    char_length(request_id) BETWEEN 1 AND 128
+    AND request_id COLLATE "C" !~ '[^A-Za-z0-9._:-]'
+  ),
+  ADD CONSTRAINT organization_audit_events_metadata_check CHECK ((
+    CASE action
+      WHEN 'create' THEN previous_status IS NULL AND resulting_status = 'pending'
+        AND changed_fields = ARRAY['name','slug','status']::varchar(32)[]
+        AND previous_name IS NULL AND resulting_name IS NOT NULL
+      WHEN 'update' THEN previous_status IS NOT NULL AND resulting_status = previous_status
+        AND changed_fields = ARRAY['name']::varchar(32)[]
+        AND previous_name IS NOT NULL AND resulting_name IS NOT NULL
+      WHEN 'activate' THEN previous_status IN ('pending','suspended') AND resulting_status = 'active'
+        AND changed_fields = ARRAY['status','activatedAt']::varchar(32)[]
+        AND previous_name IS NULL AND resulting_name IS NULL
+      WHEN 'suspend' THEN previous_status = 'active' AND resulting_status = 'suspended'
+        AND changed_fields = ARRAY['status','suspendedAt']::varchar(32)[]
+        AND previous_name IS NULL AND resulting_name IS NULL
+      ELSE false
+    END
+  ) IS TRUE),
+  ADD CONSTRAINT organization_audit_events_names_check CHECK (
+    (previous_name IS NULL OR char_length(btrim(previous_name,
+      U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+    )) > 0) AND
+    (resulting_name IS NULL OR char_length(btrim(resulting_name,
+      U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+    )) > 0)
+  );
+
+ALTER TABLE public.platform_authorization_audit_events
+  ADD CONSTRAINT platform_authorization_audit_events_approval_check CHECK (
+    char_length(approval_reference) BETWEEN 2 AND 120
+    AND approval_reference COLLATE "C" !~ '[^A-Za-z0-9._:/-]'
+  ),
+  ADD CONSTRAINT platform_authorization_audit_events_permissions_check CHECK ((
+    approved_permission_keys = ARRAY[
+      'platform.organizations.create', 'platform.organizations.read',
+      'platform.organizations.update', 'platform.organizations.activate',
+      'platform.organizations.suspend'
+    ]::varchar(80)[]
+    AND ((outcome = 'granted' AND granted_permission_keys = approved_permission_keys)
+      OR (outcome = 'already_granted' AND granted_permission_keys = ARRAY[]::varchar(80)[]))
+  ) IS TRUE);
+
+CREATE FUNCTION public.stamp_organization_audit() RETURNS trigger
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
+BEGIN
+  NEW.recorded_at := pg_catalog.clock_timestamp();
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER organization_audit_stamp BEFORE INSERT ON public.organization_audit_events
+FOR EACH ROW EXECUTE FUNCTION public.stamp_organization_audit();
+
+CREATE FUNCTION public.stamp_platform_authorization_audit() RETURNS trigger
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
+BEGIN
+  NEW.recorded_at := pg_catalog.clock_timestamp();
+  NEW.operator_session_role := SESSION_USER;
+  NEW.operator_database_role := CURRENT_USER;
+  NEW.database_name := pg_catalog.current_database();
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER platform_authorization_audit_stamp
+BEFORE INSERT ON public.platform_authorization_audit_events
+FOR EACH ROW EXECUTE FUNCTION public.stamp_platform_authorization_audit();
+
+REVOKE ALL ON FUNCTION public.stamp_organization_audit() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.stamp_platform_authorization_audit() FROM PUBLIC;
+REVOKE ALL ON TABLE public.organization_audit_events,
+  public.platform_authorization_audit_events FROM PUBLIC;
+REVOKE ALL ON TYPE public.organization_audit_action,
+  public.platform_authorization_audit_action,
+  public.platform_authorization_audit_outcome FROM PUBLIC;
+```
+
+The required scalar fields are NOT NULL in generated SQL. PostgreSQL array fields may be generated
+nullable; IS TRUE equality checks above explicitly reject NULL arrays. Keep all checks validated.
+The DB validates event shape, not the truth of an arbitrary SQL writer's narrative. Normal API and
+CLI implementations must record the actual prior/resulting state in the same transaction; a failed
+insert/late error must roll back the mutation/grant. Never record success out-of-band or retry a
+failed grant as though it committed. occurredAt is application operation time, recordedAt is the
+database ingestion clock; neither timestamp is a global transaction-order guarantee.
+
+### Privilege review and approved role responsibilities
+
+| Role | Access expectations |
+| --- | --- |
+| gym_app (platform runtime) | Approved identity/session access; organizations SELECT/INSERT/UPDATE; organization audit SELECT/INSERT only; no RBAC DML, no authorization-audit INSERT, no audit UPDATE/DELETE/TRUNCATE/TRIGGER, no DDL/ownership. |
+| gym_migrator | Human-controlled DDL/grants only; never API or provisioning credentials. |
+| gym_security_operator | Separate human-authorized login; narrow eligibility reads and RBAC SELECT/INSERT plus authorization-audit SELECT/INSERT; no audit UPDATE/DELETE, no DDL/ownership/admin or runtime credential reuse. |
+| gym_test | Independently verified disposable gym_test only; explicitly authorized fixture cleanup, not production privileges. |
+| gym_audit_runtime_test | Same marked gym_test, separate append-only connection for actual privilege-denial tests; no cleanup/DDL/role memberships. |
+| future tenant role | No global registry or either audit-table grants. Future tenant policies require separate reviewed isolation work. |
+
+Roles must exist under human control before role-specific grant SQL is approved. Inherited membership,
+column-level ACLs, existing broad grants and migrator default privileges can defeat a table REVOKE;
+review all of them, plus ownership, database/schema CREATE, superuser/CREATEROLE/CREATEDB/REPLICATION/
+BYPASSRLS and predefined read-all/write-all roles. Do not add memberships to gym_migrator,
+neondb_owner, neon_superuser, pg_read_all_data or pg_write_all_data. Neon console-created roles may be
+administrative; provision restricted logins through SQL under a reviewed human identity. No role
+passwords are included here; manage them through protected input/secret management.
+
+After actual role names/membership/ownership are approved, review these **environment-specific**
+grants with the migration; they are not permission to change any live role yet:
+
+```sql
+REVOKE ALL ON TABLE public.organization_audit_events,
+  public.platform_authorization_audit_events FROM gym_app, gym_security_operator;
+GRANT SELECT, INSERT ON TABLE public.organization_audit_events TO gym_app;
+GRANT USAGE ON TYPE public.organization_audit_action, public.organization_status TO gym_app;
+GRANT SELECT, INSERT ON TABLE public.platform_authorization_audit_events TO gym_security_operator;
+GRANT USAGE ON TYPE public.platform_authorization_audit_action,
+  public.platform_authorization_audit_outcome TO gym_security_operator;
+
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE
+  public.platform_roles, public.platform_permissions, public.platform_role_permissions,
+  public.platform_staff_roles FROM gym_app;
+GRANT SELECT ON TABLE public.platform_roles, public.platform_permissions,
+  public.platform_role_permissions, public.platform_staff_roles TO gym_security_operator;
+GRANT INSERT ON TABLE public.platform_roles, public.platform_permissions,
+  public.platform_role_permissions, public.platform_staff_roles TO gym_security_operator;
+GRANT SELECT (id, user_id, status, suspended_at) ON public.platform_staff TO gym_security_operator;
+GRANT SELECT (id, status, email_verified_at) ON public.users TO gym_security_operator;
+GRANT SELECT (user_id, password_changed_at) ON public.password_credentials TO gym_security_operator;
+GRANT SELECT (platform_staff_id, verified_at, disabled_at) ON public.platform_totp_credentials
+  TO gym_security_operator;
+```
+
+Retain required schema USAGE but never CREATE. Revoke organization DELETE/TRUNCATE/TRIGGER for the
+runtime. Audit runtime may append organization events but cannot grant permissions; operator may
+grant approved permissions but cannot change organizations. Normal application grants must not
+include audit deletion. No broad ALL TABLES/schema grants should be added to fix failures.
+The reviewed CLI is the control on the exact RBAC keys/target; possession of operator credentials is
+itself a powerful capability. Narrow INSERT grants are not database enforcement of every approved
+role assignment or mandatory audit against arbitrary operator SQL. Production must restrict human
+credential access, approve the command/source, monitor direct SQL and consider a reviewed constrained
+database procedure if database-enforced provisioning exclusivity is required.
+
+Privileges protect against ordinary writers, not owners/superusers. A migrator/owner can alter tables,
+triggers, ACLs or committed data. Before production establish protected retention periods, backup
+and restore verification, privileged-change monitoring, time synchronization, restricted audit-read
+access and, where needed, signed/immutable external export. Audit names/identity IDs are retained
+personal/business data; privacy owners must approve purpose/retention and controlled erasure handling.
+
+### Disposable test authorization and post-review commands
+
+`organization-audit.integration.spec.ts` requires both TEST_DATABASE_URL (existing gym_test cleanup
+role) and TEST_AUDIT_RUNTIME_DATABASE_URL (gym_audit_runtime_test, **same** gym_test database).
+Both connections independently verify the existing human-provisioned TEST_DATABASE_MARKER through
+the live connection before writes. This is not another branch/database or production runtime URL.
+Setup fails on missing schema/checks/triggers, wrong target or unsafe runtime privileges; it never
+skips a missing prerequisite. Configure the extra test connection only in ignored `.env.test.local`.
+
+After SQL review and explicit isolated deployment approval, the human migrator deploys to gym_test,
+then an authorized owner applies the separately approved, **gym_test-only** fixture grants:
+
+```sql
+GRANT SELECT, INSERT, DELETE ON TABLE public.organization_audit_events,
+  public.platform_authorization_audit_events TO gym_test;
+GRANT USAGE ON TYPE public.organization_audit_action,
+  public.platform_authorization_audit_action, public.platform_authorization_audit_outcome TO gym_test;
+REVOKE ALL ON TABLE public.organization_audit_events,
+  public.platform_authorization_audit_events FROM gym_audit_runtime_test;
+GRANT SELECT, INSERT ON TABLE public.organization_audit_events TO gym_audit_runtime_test;
+GRANT USAGE ON TYPE public.organization_audit_action, public.organization_status TO gym_audit_runtime_test;
+```
+
+The test role also requires existing identity/RBAC/organization fixture grants. The separate runtime
+test role needs CONNECT and public-schema USAGE without CREATE; no inherited cleanup/owner/migrator
+membership. Audit FK enforcement needs no broad access to parent tables for this append-only role.
+Authorization tables intentionally have no runtime-test DML grant. If default privileges granted
+more rights, remove them before testing. Never copy fixture DELETE grants into gym_dev/gym_prod.
+
+After review only, in dependency order:
+
+```bash
+cd /Users/dvniels/Desktop/projects/gym/api/db
+npm run migration:test:deploy
+# Apply the separately approved disposable role grants in Neon SQL Editor (gym_test only).
+npm run prisma:generate
+npx prettier --write test/integration/audit-test-fixtures.ts test/integration/organization-audit.integration.spec.ts test/unit/audit-schema.spec.ts test/unit/package-exports.spec.ts README.md
+npm run format:check
+npm run lint
+npm run typecheck
+npm run test:unit
+npm run test:integration
+npm run build
+```
+
+The real PostgreSQL suite covers action/metadata/checks/FKs, forged operator/clock replacement,
+organization+audit commit/rollback, authorization+assignment atomicity, failed-audit rollback,
+runtime privilege denial, PUBLIC ACLs and scoped sentinel preservation. It reuses the existing safety,
+identity and organization fixtures. Audit cleanup reserves UUIDs and matches exact IDs plus parent
+identifiers/correlation before deleting; audit cleanup precedes referenced parent cleanup. The
+existing organization suite covers the three checks and all 31 reserved slugs. These are authored
+tests, not passing evidence; strict compilation requires human client generation first.
+
+Only after successful isolated verification, approved normal-target migration/grants and a rebuilt
+public db package may Phase B activate durable API mutations. Keep the local sibling package
+workflow; no registry lookup or invented package version is needed. The required Phase B operator
+CLI verifies actual database/session/effective role plus independently provisioned marker, rejects
+owner/migrator/unsafe memberships, requires interactive operation/target and approval confirmation,
+locks concurrent provisioning, selects only a verified active MFA-capable staff identity, creates
+only the exact five permissions and dedicated `platform.organization.manager` role, refuses
+conflicting existing state, and records assignment/outcome in the same transaction. The
+`platform.owner` role remains dashboard-only and is never silently expanded. Failed provisioning
+attempts belong in sanitized protected operational monitoring, not falsely committed success events.
+Those CLI/provider changes and their API tests are the next phase, not yet implemented or verified.
 
 ## Engineering rules
 
