@@ -42,14 +42,16 @@
     "migration:create": "prisma migrate dev --create-only",
     "migration:status": "prisma migrate status",
     "migration:deploy": "prisma migrate deploy",
+    "migration:test:deploy": "prisma migrate deploy --config prisma.test.config.ts",
     "build": "npm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.cjs --runInBand",
+    "test": "node --env-file=.env.local --env-file=.env.test.local --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.cjs --runInBand",
     "test:unit": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.cjs --selectProjects unit --runInBand",
-    "test:integration": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.cjs --selectProjects integration --runInBand",
+    "test:integration": "node --env-file=.env.local --env-file=.env.test.local --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.cjs --selectProjects integration --runInBand",
+    "test:integration:managed": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.config.cjs --selectProjects integration --runInBand",
     "prepack": "npm run build"
   },
   "peerDependencies": {
