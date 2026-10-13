@@ -366,15 +366,21 @@ npm run migration:status
 npx prisma migrate status --config prisma.test.config.ts
 ```
 
-Generate a new SQL-only draft using the same separately provisioned shadow database:
+The human-generated `20261013203346_harden_organization_constraints` migration contains only an
+empty-migration comment and has already been applied somewhere. It adds no CHECK constraints.
+Preserve its exact contents/checksum and generate another SQL-only draft using the separate shadow
+database:
 
 ```bash
-npm run migration:create -- --name harden_organization_constraints
+npm run migration:create -- --name enforce_organization_integrity
 ```
 
 Create-only supports an empty migration when the Prisma schema has no changes. Do not accept a reset
 prompt if drift is reported; stop and review the target/history. Send the new migration.sql for review
-before it is populated or deployed. Existing rows must satisfy all checks before adding them; conflicts
+before it is populated or deployed. **Do not deploy the empty draft.** It must contain the three
+reviewed CHECK additions and PUBLIC-access revocation shown above before migration deployment.
+Applied migration status alone cannot prove those objects exist. Existing rows must satisfy all
+checks before adding them; conflicts
 require separately reviewed correction, not silent renaming or deletion. The initial organization
 migration remains unchanged, including on databases where it is still pending. The commands below
 for create_organizations describe the original creation workflow, not a request to repeat it.
