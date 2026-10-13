@@ -247,6 +247,179 @@ Remera). Follow the tenant-isolation requirements in this section.
   that the token is supplied through the user npm configuration rather than this repository.
 - **Migration drift:** stop deployment and follow the approved recovery procedure. Do not use `db push`.
 
+## Organization foundation (Step 10)
+
+`Organization` is an independent business/tenant root mapped to `public.organizations`, not a User,
+PlatformStaff assignment or tenant-owned child. It has no self-referencing organizationId, owner
+identity, branch, subscription, financial, contact or arbitrary metadata fields. Creating a row grants
+no account, platform permission, tenant membership, subscription or feature entitlement.
+
+Fields: UUID `id`; required nonunique `name` (varchar 160); globally unique `slug` (varchar 63);
+`status` defaulting to PENDING; `createdAt`/`updatedAt`; nullable `activatedAt`, `suspendedAt` and
+`archivedAt`. All dates use timestamptz(6). Prisma supplies UUIDs and updates updatedAt; these are not
+PostgreSQL UUID/updatedAt triggers, so raw SQL writers must supply those values explicitly. Future
+workflows must never replace the UUID when names, slugs or lifecycle state change.
+
+`organization_status` maps PENDING/ACTIVE/SUSPENDED/ARCHIVED to lowercase database enum values:
+
+- PENDING: registered, not approved for normal operation.
+- ACTIVE: operational from the platform lifecycle perspective only.
+- SUSPENDED: operational access disabled pending review.
+- ARCHIVED: inactive and retained pending approved records handling.
+
+Status is authoritative. Nullable lifecycle dates record the latest corresponding transition,
+not an exhaustive audit log or independent access grants; restoration may retain earlier dates.
+This package implements no transitions, timestamp/status coupling, authorization or automatic
+activation. Future API workflows must apply permissions, transactions and audit requirements.
+Archival retains the unique slug; no partial uniqueness or automatic reassignment is implemented.
+No automatic deletion/cascade is introduced. Future dependent relations require reviewed restrictive
+foreign keys. Archival is not legal erasure or a justification for indefinite retention.
+
+### Slugs and required PostgreSQL checks
+
+Slugs are public routing identifiers, never credentials. Require 3–63 ASCII characters, starting
+with a lowercase letter, ending in a letter/digit, with single hyphens separating alphanumeric
+groups. Uppercase, Unicode, dots, underscores, spaces, repeated/edge hyphens are invalid. Future
+API normalization must occur before persistence; PostgreSQL rejects invalid input rather than
+silently normalizing it. Subdomain provisioning and reassignment are not implemented.
+
+The reserved list below covers the requested infrastructure names plus account/accounts, oauth,
+console, internal, health, metrics, production, development and bootstrap. It is a reviewed initial
+allocation, not a complete prediction of future infrastructure. New reserved names require a
+reviewed migration and a preflight for existing organizations; never silently steal a held slug.
+
+Schema uniqueness and the enum do not enforce name/slug checks. **No organization migration has
+been generated or applied for this change.** After the human generates the draft, review and approve
+these exact additions in that new, unapplied SQL, together with the generated table/type/index DDL:
+
+```sql
+ALTER TABLE public.organizations
+  ADD CONSTRAINT organizations_name_nonblank_check CHECK (
+    char_length(btrim(name,
+      U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+    )) > 0
+  ),
+  ADD CONSTRAINT organizations_slug_format_check CHECK (
+    char_length(slug) BETWEEN 3 AND 63
+    AND slug COLLATE "C" ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$'
+  ),
+  ADD CONSTRAINT organizations_slug_reserved_check CHECK (
+    slug NOT IN (
+      'admin', 'api', 'app', 'www', 'auth', 'login', 'member', 'members',
+      'portal', 'dashboard', 'billing', 'support', 'status', 'static',
+      'assets', 'cdn', 'mail', 'dev', 'staging', 'test', 'localhost',
+      'account', 'accounts', 'oauth', 'console', 'internal', 'health',
+      'metrics', 'production', 'development', 'bootstrap'
+    )
+  );
+
+REVOKE ALL ON TABLE public.organizations FROM PUBLIC;
+```
+
+The name check explicitly covers ASCII and Unicode whitespace (including NBSP/ideographic spaces)
+and BOM; it does not trim or prohibit Unicode display names. Require UTF-8 server encoding for this
+reviewed Unicode policy. The slug regex uses C collation for stable ASCII ranges. See PostgreSQL's
+[Unicode literal syntax](https://www.postgresql.org/docs/current/sql-syntax-lexical.html) and
+[CHECK constraints](https://www.postgresql.org/docs/current/ddl-constraints.html).
+
+Expected objects: `organizations_pkey`, `organizations_slug_key`, the three named CHECK constraints
+above, and `organizations_status_created_at_id_idx` on (status, created_at DESC, id). The latter
+supports filtered platform administration ordering and a deterministic tie-breaker; no duplicate
+single-column status/slug indexes are needed. Unfiltered global ordering may need future measured
+query/index design, not speculative extra indexes here. Uniqueness is database-enforced under
+concurrency and applies to every status. Confirm all checks are validated, not left NOT VALID.
+
+### Platform versus tenant access: exposure blocker
+
+The registry is currently platform-managed only. Do not apply a tenant-owned child rule by adding a
+self-reference, and do not add an unrestricted all-tenants runtime helper. `TenantTransactionService`
+validates UUID shape and sets transaction-local context; it neither authenticates membership nor
+creates PostgreSQL policies. Organization selection/slug knowledge is never authorization.
+
+Before exposing any tenant-facing organization data, implement and verify separate platform and
+tenant runtime roles/privileges plus fail-closed policies where appropriate. Audit inherited grants,
+role memberships, table ownership, BYPASSRLS and migrator default privileges. The current general
+application role cannot be treated as an isolated tenant role merely by setting a context variable.
+Do not add a permissive RLS policy to accommodate that shared role. Platform listing requires an
+explicit platform permission and audited interface; tenant roles must have no unrestricted registry
+access. Table owners and privileged roles need separate consideration in RLS design.
+
+The draft must revoke PUBLIC access and include only approved platform grants after role review.
+Normal platform runtime privileges should not include DELETE for an archival-only workflow;
+retention deletion belongs to a separately approved operational process.
+Do not grant this table to future tenant roles, broaden schema-wide grants or let runtime roles own
+or alter it. On the disposable test database only, its verified restricted test role needs explicit
+SELECT/INSERT/UPDATE/DELETE on organizations and schema/type usage, but no DDL/administrative powers.
+Tests prove persistence constraints, not completed tenant isolation. Future child records require
+organization foreign keys, organization-leading indexes/uniques, restrictive relationships and
+branch-to-organization consistency when branches are later added.
+
+### Human-controlled migration and verification gate
+
+From `api/db`, confirm `.env.migrations.local` selects the direct migration role on the intended
+development database and a separate disposable shadow database. Shell variables take precedence
+over dotenv; remove stale exports before running these commands. Never print connection credentials.
+
+```bash
+npm run prisma:format
+npm run prisma:validate
+npm run migration:create -- --name create_organizations
+```
+
+**Stop here and provide the generated migration.sql for review before deployment.** Review all DDL:
+only the organization enum/table, required checks, unique/administration indexes and approved grants
+may change. Existing platform identity/authentication tables and applied migrations must remain
+unchanged. Review schema placement, object names, defaults/nullability, Unicode/check behavior,
+privileges and default grants. Do not fabricate migration directories or use db push.
+
+After SQL approval only, verify the disposable target, marker, role and `TEST_MIGRATION_DATABASE_URL`
+point to gym_test rather than gym_dev, gym_shadow, gym_bootstrap_test or production. Deploy with its
+separate migrator, then have the human apply the approved table-specific restricted test grants.
+If the verified role is named gym_test, the following SQL belongs only in the development branch's
+gym_test database after migration approval/deployment (not in a cross-environment migration):
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.organizations TO gym_test;
+GRANT USAGE ON TYPE public.organization_status TO gym_test;
+```
+
+Confirm existing schema USAGE without CREATE remains in place. If the verified role has another
+name, review the actual role rather than granting to an assumed identity.
+
+```bash
+npm run migration:test:deploy
+npm run prisma:generate
+npx prettier --write test/integration/organization-test-fixtures.ts test/integration/organization.integration.spec.ts test/unit/organization-schema.spec.ts test/unit/package-exports.spec.ts README.md
+npm run format:check
+npm run test:unit
+npm run test:integration
+npm run lint
+npm run typecheck
+npm run build
+```
+
+Generation is required before compilation/tests: existing generated sources do not yet contain
+Organization/OrganizationStatus. The current src/index.ts already re-exports the generated public
+contract; no private imports, schema copy, new client or hand-edited generated artifacts are needed.
+The schema remains additive, but consumers need the migration before querying the new table.
+The current API uses a local sibling file dependency, so a rebuilt db package supplies development
+exports without a registry lookup. A future immutable release needs a separately reviewed compatible
+version/package process; no version is invented or bumped in this step.
+
+Organization integration tests verify the live database safety marker before fixtures, use fictional
+gym names, reserve UUIDs/slugs before writes (and track generated UUIDs before commit), and delete only
+exact tracked ID/slug pairs. They cover defaults, length/Unicode/blank checks, every reserved slug,
+duplicate/concurrent/archived uniqueness, enum/lifecycle persistence, rollback, mapped catalog objects
+and sentinel preservation. Existing platform suites remain regression coverage. Missing constraints,
+migrations, generated exports, marker or role grants are failures, not reasons to skip checks.
+
+Do not deploy to development/production or publish based on authored tests alone. After successful
+disposable verification, obtain explicit approval for each target and follow expansion deployment
+order before consumer rollout. Stop on drift or failed migration; review applied state and use a
+forward fix rather than rewriting applied history or dropping a table containing organization data.
+Branches, memberships/owners, staff, members, subscriptions, payments, APIs, frontend, domain
+provisioning and lifecycle workflows remain deferred. Step 11 is not started.
+
 ## Engineering rules
 
 All contributors and agents must read `AGENTS.md` and `.agents/README.md`. These rules prohibit agents
