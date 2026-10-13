@@ -53,6 +53,9 @@ describe('Prisma schema contract', () => {
 		expect(challenge).toMatch(/tokenDigest\s+String\s+@unique/u);
 		expect(challenge).toContain('failedAttempts');
 		expect(challenge).toContain('maxAttempts');
+		expect(challenge).toMatch(/emailOtpDigest\s+String\?/u);
+		expect(challenge).toMatch(/emailOtpExpiresAt\s+DateTime\?/u);
+		expect(challenge).toMatch(/emailOtpSendCount\s+Int\s+@default\(0\)/u);
 		expect(schema).not.toMatch(/^\s+(?:token|secret|recoveryCode)\s+/mu);
 	});
 
