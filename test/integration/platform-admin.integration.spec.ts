@@ -77,9 +77,7 @@ describe('platform administrator database foundation', () => {
 	});
 
 	afterAll(async () => {
-		if (module !== undefined) {
-			await module.close();
-		}
+		await module.close();
 	});
 
 	function requireVerifiedDatabase(): VerifiedTestDatabase {
