@@ -72,9 +72,7 @@ describe('organization database foundation', () => {
 		await module.init();
 		prisma = module.get(PrismaService);
 		const verifiedDatabase = await verifyTestDatabaseSafety(prisma, safety);
-		const readiness = await prisma.$queryRaw<
-			{ table_exists: boolean; validated_checks: number }[]
-		>`
+		const readiness = await prisma.$queryRaw<{ table_exists: boolean; validated_checks: number }[]>`
 			SELECT to_regclass('public.organizations') IS NOT NULL AS table_exists,
 				(SELECT count(*)::integer FROM pg_catalog.pg_constraint
 				 WHERE conrelid = to_regclass('public.organizations') AND contype = 'c'
