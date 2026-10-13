@@ -7,8 +7,7 @@ const REFERENCE_DATABASE_URLS = [
 	'SHADOW_DATABASE_URL',
 ] as const;
 const TEST_DATABASE_COMMENT_PREFIX = 'nexcode-gym:disposable-integration-test:';
-const UUID_PATTERN =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const UNSAFE_NAME_PATTERN = /(?:^|[._-])(?:prod|production|live)(?:[._-]|$)/iu;
 
 const verifiedTestDatabase = Symbol('verifiedTestDatabase');
@@ -37,7 +36,9 @@ export interface VerifiedTestDatabase {
 	readonly [verifiedTestDatabase]: true;
 }
 
-export function assertTestDatabaseWasVerified(token: unknown): asserts token is VerifiedTestDatabase {
+export function assertTestDatabaseWasVerified(
+	token: unknown,
+): asserts token is VerifiedTestDatabase {
 	if (
 		typeof token !== 'object' ||
 		token === null ||
