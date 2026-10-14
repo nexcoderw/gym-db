@@ -304,6 +304,14 @@ describe('durable organization and authorization audit', () => {
 			previousName: null,
 			resultingName: null,
 		},
+		{
+			action: OrganizationAuditAction.ARCHIVE,
+			previousStatus: OrganizationStatus.SUSPENDED,
+			resultingStatus: OrganizationStatus.ARCHIVED,
+			changedFields: ['status', 'archivedAt'],
+			previousName: null,
+			resultingName: null,
+		},
 	])('persists action-specific history for $action', async (change) => {
 		const data = event(await organization(), await actor());
 		await expect(
@@ -404,6 +412,51 @@ describe('durable organization and authorization audit', () => {
 		await expect(prisma.platformStaff.delete({ where: { id: staffId } })).rejects.toMatchObject({
 			code: 'P2003',
 		});
+	});
+
+	it('rolls back failed archival and retains the record and previous audit after successful archival', async () => {
+		const id = await organization();
+		const staffId = await actor();
+		const created = event(id, staffId);
+		await prisma.organizationAuditEvent.create({ data: created });
+		const archived = {
+			...event(id, staffId),
+			action: OrganizationAuditAction.ARCHIVE,
+			previousStatus: OrganizationStatus.PENDING,
+			resultingStatus: OrganizationStatus.ARCHIVED,
+			changedFields: ['status', 'archivedAt'],
+			previousName: null,
+			resultingName: null,
+		};
+		await expect(
+			prisma.$transaction(async (transaction) => {
+				await transaction.organization.update({
+					where: { id },
+					data: { status: OrganizationStatus.ARCHIVED, archivedAt: new Date() },
+				});
+				await transaction.organizationAuditEvent.create({
+					data: { ...archived, requestId: 'invalid request' },
+				});
+			}, options),
+		).rejects.toThrow();
+		expect(await prisma.organization.findUnique({ where: { id } })).toMatchObject({
+			status: OrganizationStatus.PENDING,
+			archivedAt: null,
+		});
+		const archivedAt = new Date();
+		await prisma.$transaction(async (transaction) => {
+			await transaction.organization.update({
+				where: { id },
+				data: { status: OrganizationStatus.ARCHIVED, archivedAt },
+			});
+			await transaction.organizationAuditEvent.create({ data: archived });
+		}, options);
+		expect(await prisma.organization.findUnique({ where: { id } })).toMatchObject({
+			status: OrganizationStatus.ARCHIVED,
+			archivedAt,
+		});
+		expect(await prisma.organizationAuditEvent.count({ where: { organizationId: id } })).toBe(2);
+		await expect(prisma.organization.delete({ where: { id } })).rejects.toMatchObject({ code: 'P2003' });
 	});
 
 	it('derives authorization operator identity and recordedAt despite spoofed values', async () => {
