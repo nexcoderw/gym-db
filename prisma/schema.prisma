@@ -39,6 +39,7 @@ enum OrganizationAuditAction {
   UPDATE   @map("update")
   ACTIVATE @map("activate")
   SUSPEND  @map("suspend")
+  ARCHIVE  @map("archive")
 
   @@map("organization_audit_action")
 }
