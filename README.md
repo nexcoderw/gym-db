@@ -482,16 +482,18 @@ Neither enforces organization integrity. Preserve both, plus the already-applied
 known from repository files; do not infer it or replace its checksum. This section supersedes the
 older SQL-only draft-generation instructions above for the current Step 12 workflow.
 
-Phase A proposes two additive models and tests. **No migration has been generated, reviewed or
-deployed for this proposal; no checks have been executed.** The API is deliberately unchanged at this
-checkpoint: no write enablement, permission assignment, CLI execution, owner-role change or frontend
-change. After the generated SQL is reviewed and the public contract is confirmed, Phase B implements
-the supplied-transaction audit provider and a separate operator-only provisioning CLI.
+The original Phase A proposed two additive models and tests. The repository now contains
+`20261013213208_organization_integrity_and_audit`; its presence is not proof of live deployment or
+the custom CHECK/trigger/grant prerequisites below. Preserve its checksum. The API now implements
+the supplied-transaction organization audit provider; the operator-only permission-provisioning CLI
+remains separate. The archival expansion below requires a new human-generated migration. No live
+schema checks, migrations, grants or tests were run by the agent for this expansion.
 
 `OrganizationAuditEvent` maps to `organization_audit_events`: required organization/actor foreign
 keys, request ID (1–128 ASCII correlation characters), action, previous/resulting lifecycle state,
 action-specific changed fields, bounded prior/resulting names, occurredAt and database-controlled
-recordedAt. CREATE maps to `create`, UPDATE to `update`, ACTIVATE to `activate`, SUSPEND to `suspend`.
+recordedAt. CREATE maps to `create`, UPDATE to `update`, ACTIVATE to `activate`, SUSPEND to `suspend`,
+and ARCHIVE maps to `archive` after the archival expansion is deployed.
 Names are included only for creation/renaming; lifecycle metadata does not copy request bodies.
 Indexes lead with organization or actor and recordedAt/id; additional recorded-time and request-ID
 indexes support controlled investigation/export. These records are platform-managed, not tenant
@@ -586,7 +588,7 @@ ALTER TABLE public.organization_audit_events
     AND request_id COLLATE "C" !~ '[^A-Za-z0-9._:-]'
   ),
   ADD CONSTRAINT organization_audit_events_metadata_check CHECK ((
-    CASE action
+    CASE action::text
       WHEN 'create' THEN previous_status IS NULL AND resulting_status = 'pending'
         AND changed_fields = ARRAY['name','slug','status']::varchar(32)[]
         AND previous_name IS NULL AND resulting_name IS NOT NULL
@@ -598,6 +600,10 @@ ALTER TABLE public.organization_audit_events
         AND previous_name IS NULL AND resulting_name IS NULL
       WHEN 'suspend' THEN previous_status = 'active' AND resulting_status = 'suspended'
         AND changed_fields = ARRAY['status','suspendedAt']::varchar(32)[]
+        AND previous_name IS NULL AND resulting_name IS NULL
+      WHEN 'archive' THEN previous_status IN ('pending','active','suspended')
+        AND resulting_status = 'archived'
+        AND changed_fields = ARRAY['status','archivedAt']::varchar(32)[]
         AND previous_name IS NULL AND resulting_name IS NULL
       ELSE false
     END
@@ -666,6 +672,112 @@ CLI implementations must record the actual prior/resulting state in the same tra
 insert/late error must roll back the mutation/grant. Never record success out-of-band or retry a
 failed grant as though it committed. occurredAt is application operation time, recordedAt is the
 database ingestion clock; neither timestamp is a global transaction-order guarantee.
+
+### Archival expansion and runtime write rollout
+
+The API now records organization mutations using the existing audit table in the SAME transaction.
+Archival preserves the organization, actor references, slug and audit history. It needs the new
+`OrganizationAuditAction.ARCHIVE` enum member; it does not delete rows or grant runtime DELETE.
+Before using the updated API, a human must complete these steps on the approved development target.
+Production is a separate reviewed rollout, never a fallback target for development commands.
+
+1. Inspect `.env.migrations.local` locally without sharing credentials. DIRECT_DATABASE_URL must
+   select gym_dev as gym_migrator; TEST_MIGRATION_DATABASE_URL must select the marked gym_test.
+   SHADOW_DATABASE_URL must select the disposable gym_shadow, never gym_dev or production.
+2. Inspect deployed migration status and actual audit definitions using the read-only preflight below.
+   Confirm the request/names CHECKs and stamping trigger are installed and validated. If absent,
+   include the missing reviewed definitions from this README in a NEW forward migration, never
+   change an applied file or bypass the checks. Stop if existing data violates the intended checks.
+3. Generate the archival migration draft, then stop for SQL review:
+
+```bash
+cd /Users/dvniels/Desktop/projects/gym/api/db
+npm run prisma:format
+npm run prisma:validate
+npm run migration:status
+npm run migration:create -- --name add_organization_archival_audit
+```
+
+Do not accept a reset or use db push. The generated draft should add only the `archive` enum label.
+If it proposes dropping objects or unrelated changes, stop and resolve drift. In that NEW unapplied
+draft, extend the metadata CHECK to the complete `CASE action::text` definition above (including
+archive). Replace the existing named metadata CHECK only after inspecting its definition; if absent,
+add it and the other missing prerequisites. Preserve all existing action branches, validated state,
+request/name checks, foreign keys and stamping triggers. Text comparison deliberately avoids using
+the new enum literal as an enum value before the enum-addition transaction commits. Do not merely
+add the enum: an older metadata CHECK will reject every archive event.
+
+Read-only Neon SQL Editor preflight (development branch, gym_dev, authorized schema owner):
+
+```sql
+SELECT current_database(), current_user;
+SELECT conname, convalidated, pg_get_constraintdef(oid) AS definition
+FROM pg_catalog.pg_constraint
+WHERE conrelid = to_regclass('public.organization_audit_events') AND contype = 'c';
+SELECT tgname, tgenabled, pg_get_triggerdef(oid) AS definition
+FROM pg_catalog.pg_trigger
+WHERE tgrelid = to_regclass('public.organization_audit_events') AND NOT tgisinternal;
+SELECT enumlabel
+FROM pg_catalog.pg_enum
+WHERE enumtypid = 'public.organization_audit_action'::regtype
+ORDER BY enumsortorder;
+```
+
+After the new draft is reviewed, the human deploys to development and its independently verified
+test database, then regenerates the local package before API compilation:
+
+```bash
+npm run migration:deploy
+npm run migration:test:deploy
+npm run prisma:generate
+npm run format
+npm run lint
+npm run typecheck
+npm run test:unit
+npm run test:integration
+npm run build
+```
+
+Any other disposable database used by bootstrap tests must receive the reviewed migrations via
+its own verified migration URL. Do not point those tests at gym_dev. Audit privilege tests require
+the distinct append-only gym_audit_runtime_test role in gym_test as described below.
+
+The following targeted runtime grants address missing organization write/audit privileges, not
+superadmin identity. Run them only after reviewing gym_app membership/ownership and existing ACLs.
+Use Neon SQL Editor on development / gym_dev as the authorized owner, never the API connection.
+The transaction guard refuses a differently named database; independently confirm the branch too.
+
+```sql
+BEGIN;
+DO $$ BEGIN
+  IF current_database() <> 'gym_dev' THEN
+    RAISE EXCEPTION 'Expected development gym_dev; refusing runtime grants';
+  END IF;
+END $$;
+GRANT USAGE ON SCHEMA public TO gym_app;
+GRANT SELECT, INSERT, UPDATE ON TABLE public.organizations TO gym_app;
+GRANT SELECT, INSERT ON TABLE public.organization_audit_events TO gym_app;
+GRANT USAGE ON TYPE public.organization_status, public.organization_audit_action TO gym_app;
+REVOKE DELETE, TRUNCATE, TRIGGER ON TABLE public.organizations FROM gym_app;
+REVOKE UPDATE, DELETE, TRUNCATE, TRIGGER ON TABLE public.organization_audit_events FROM gym_app;
+COMMIT;
+
+SELECT
+  has_table_privilege('gym_app', 'public.organizations', 'SELECT') AS can_read,
+  has_table_privilege('gym_app', 'public.organizations', 'INSERT') AS can_create,
+  has_table_privilege('gym_app', 'public.organizations', 'UPDATE') AS can_update,
+  has_table_privilege('gym_app', 'public.organization_audit_events', 'INSERT') AS can_append_audit,
+  (has_any_column_privilege('gym_app', 'public.organization_audit_events', 'UPDATE')
+   OR has_table_privilege('gym_app', 'public.organization_audit_events', 'DELETE,TRUNCATE,TRIGGER'))
+    AS can_mutate_audit;
+```
+
+Expected: the first four results are true, can_mutate_audit is false. A table REVOKE does not remove
+column grants, PUBLIC/inherited access or ownership; stop if the audit mutation check remains true.
+Do not use ALL TABLES grants/default privileges: future tables and authorization-audit records need
+separate approval. The runtime must remain unable to mutate permissions or erase audit history.
+The separate provisioning permission allowlist remains five keys; archival for non-owner staff
+requires independent approval and is not silently added to that contract.
 
 ### Privilege review and approved role responsibilities
 
