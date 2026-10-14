@@ -18,6 +18,7 @@ describe('public package exports', () => {
 			UPDATE: 'UPDATE',
 			ACTIVATE: 'ACTIVATE',
 			SUSPEND: 'SUSPEND',
+			ARCHIVE: 'ARCHIVE',
 		});
 		expect(databasePackage.PlatformAuthorizationAuditAction).toEqual({
 			PROVISION_ORGANIZATION_MANAGER: 'PROVISION_ORGANIZATION_MANAGER',
