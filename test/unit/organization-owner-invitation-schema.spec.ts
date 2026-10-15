@@ -78,9 +78,7 @@ describe('organization owner invitation schema contract', () => {
 		expect(audit).toContain(
 			'@@index([organizationId, ownerInvitationId, recordedAt(sort: Desc), id]',
 		);
-		expect(audit).toContain(
-			'@@index([organizationId, action, recordedAt(sort: Desc), id]',
-		);
+		expect(audit).toContain('@@index([organizationId, action, recordedAt(sort: Desc), id]');
 		expect(audit).not.toMatch(/token|email|credential|rawRequest|metadata\s+Json/iu);
 	});
 
@@ -90,9 +88,7 @@ describe('organization owner invitation schema contract', () => {
 		const staff = /model PlatformStaff \{[\s\S]*?\n\}/u.exec(source)?.[0];
 
 		expect(organization).toMatch(/ownerInvitations\s+OrganizationOwnerInvitation\[\]/u);
-		expect(organization).toMatch(
-			/ownershipAuditEvents\s+OrganizationOwnershipAuditEvent\[\]/u,
-		);
+		expect(organization).toMatch(/ownershipAuditEvents\s+OrganizationOwnershipAuditEvent\[\]/u);
 		expect(staff).toMatch(/ownerInvitationsCreated\s+OrganizationOwnerInvitation\[\]/u);
 		expect(staff).toMatch(/ownershipAuditEvents\s+OrganizationOwnershipAuditEvent\[\]/u);
 	});
