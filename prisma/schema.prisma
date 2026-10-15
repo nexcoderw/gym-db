@@ -70,6 +70,28 @@ enum OrganizationOwnershipAuditAction {
   @@map("organization_ownership_audit_action")
 }
 
+enum OrganizationOwnerEnrollmentPurpose {
+  NEW_USER_ENROLLMENT           @map("new_user_enrollment")
+  EXISTING_USER_AUTHENTICATION @map("existing_user_authentication")
+
+  @@map("organization_owner_enrollment_purpose")
+}
+
+enum OrganizationOwnerEnrollmentStatus {
+  PENDING  @map("pending")
+  VERIFIED @map("verified")
+  CONSUMED @map("consumed")
+  REVOKED  @map("revoked")
+
+  @@map("organization_owner_enrollment_status")
+}
+
+enum OrganizationOwnerAcceptanceAuditAction {
+  OWNER_INVITATION_ACCEPTED @map("owner_invitation_accepted")
+
+  @@map("organization_owner_acceptance_audit_action")
+}
+
 enum OrganizationAuditAction {
   CREATE   @map("create")
   UPDATE   @map("update")
@@ -112,6 +134,8 @@ model Organization {
   ownerInvitations          OrganizationOwnerInvitation[]
   ownerInvitationDeliveries OrganizationOwnerInvitationDelivery[]
   ownershipAuditEvents      OrganizationOwnershipAuditEvent[]
+  ownerEnrollmentChallenges OrganizationOwnerEnrollmentChallenge[]
+  ownerAcceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
 
   @@index([status, createdAt(sort: Desc), id], map: "organizations_status_created_at_id_idx")
   @@map("organizations")
@@ -130,6 +154,8 @@ model User {
   passwordCredential      PasswordCredential?
   platformStaff           PlatformStaff?
   organizationMemberships OrganizationMembership[]
+  ownerEnrollmentChallenges OrganizationOwnerEnrollmentChallenge[]
+  ownerAcceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
 
   @@index([status], map: "users_status_idx")
   @@map("users")
@@ -151,9 +177,11 @@ model OrganizationMembership {
   organization   Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_memberships_organization_fkey")
   user           User                         @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_memberships_user_fkey")
   roles          OrganizationMembershipRole[]
+  ownerAcceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
 
   @@unique([organizationId, userId], map: "organization_memberships_organization_user_key")
   @@unique([organizationId, id], map: "organization_memberships_organization_id_key")
+  @@unique([organizationId, id, userId], map: "organization_memberships_org_id_user_key")
   @@index([organizationId, status, createdAt(sort: Desc), id], map: "organization_memberships_org_status_created_id_idx")
   @@index([organizationId, createdAt(sort: Desc), id], map: "organization_memberships_org_created_id_idx")
   @@index([userId, status, createdAt(sort: Desc), id], map: "organization_memberships_user_status_created_id_idx")
@@ -217,12 +245,75 @@ model OrganizationOwnerInvitation {
   invitedByPlatformStaff   PlatformStaff                        @relation(fields: [invitedByPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitations_actor_fkey")
   auditEvents              OrganizationOwnershipAuditEvent[]
   delivery                 OrganizationOwnerInvitationDelivery?
+  enrollmentChallenges     OrganizationOwnerEnrollmentChallenge[]
+  acceptanceAudit          OrganizationOwnerAcceptanceAuditEvent?
 
   @@unique([organizationId, id], map: "organization_owner_invitations_organization_id_key")
   @@index([organizationId, status, createdAt(sort: Desc), id], map: "organization_owner_invitations_org_status_created_id_idx")
   @@index([organizationId, invitedEmail, createdAt(sort: Desc), id], map: "organization_owner_invitations_org_email_created_id_idx")
   @@index([organizationId, invitedByPlatformStaffId, createdAt(sort: Desc), id], map: "organization_owner_invitations_org_actor_created_id_idx")
   @@map("organization_owner_invitations")
+}
+
+/// Short-lived owner-enrollment proof only. Server-side identity verification resolves userId;
+/// neither invitation possession nor a persisted status alone authenticates a recipient.
+/// Reviewed SQL must enforce proof lifecycle, monotonic attempts, expiry and single consumption.
+model OrganizationOwnerEnrollmentChallenge {
+  id                   String                            @id(map: "owner_enrollment_challenges_pkey") @default(uuid()) @db.Uuid
+  organizationId       String                            @map("organization_id") @db.Uuid
+  ownerInvitationId    String                            @map("owner_invitation_id") @db.Uuid
+  userId               String?                           @map("user_id") @db.Uuid
+  purpose              OrganizationOwnerEnrollmentPurpose
+  status               OrganizationOwnerEnrollmentStatus @default(PENDING)
+  tokenDigest          String?                           @unique(map: "owner_enrollment_challenges_token_digest_key") @map("token_digest") @db.VarChar(128)
+  failedAttempts       Int                               @default(0) @map("failed_attempts")
+  maxAttempts          Int                               @default(5) @map("max_attempts")
+  createdAt            DateTime                          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime                          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  expiresAt            DateTime                          @map("expires_at") @db.Timestamptz(6)
+  mailboxVerifiedAt    DateTime?                         @map("mailbox_verified_at") @db.Timestamptz(6)
+  authenticatedAt      DateTime?                         @map("authenticated_at") @db.Timestamptz(6)
+  stepUpVerifiedAt     DateTime?                         @map("step_up_verified_at") @db.Timestamptz(6)
+  verifiedAt           DateTime?                         @map("verified_at") @db.Timestamptz(6)
+  consumedAt           DateTime?                         @map("consumed_at") @db.Timestamptz(6)
+  revokedAt            DateTime?                         @map("revoked_at") @db.Timestamptz(6)
+  organization         Organization                      @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "owner_enrollment_challenges_organization_fkey")
+  ownerInvitation      OrganizationOwnerInvitation        @relation(fields: [organizationId, ownerInvitationId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "owner_enrollment_challenges_invitation_fkey")
+  user                 User?                             @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "owner_enrollment_challenges_user_fkey")
+  acceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
+
+  @@unique([organizationId, id, ownerInvitationId, userId], map: "owner_enrollment_challenges_proof_identity_key")
+  @@index([organizationId, ownerInvitationId, status, expiresAt, id], map: "owner_enrollment_challenges_org_invitation_status_idx")
+  @@index([organizationId, userId, createdAt(sort: Desc), id], map: "owner_enrollment_challenges_org_user_created_idx")
+  @@index([expiresAt, id], map: "owner_enrollment_challenges_expiry_idx")
+  @@map("organization_owner_enrollment_challenges")
+}
+
+/// Recipient-actor acceptance history, separate from administrator invitation-management audits.
+/// Composite references bind the invitation, consumed proof and membership to the same gym/User.
+/// Reviewed SQL stamps recordedAt; normal runtime privileges permit only SELECT and INSERT.
+model OrganizationOwnerAcceptanceAuditEvent {
+  id                       String                                 @id(map: "owner_acceptance_audit_events_pkey") @default(uuid()) @db.Uuid
+  organizationId           String                                 @map("organization_id") @db.Uuid
+  ownerInvitationId        String                                 @map("owner_invitation_id") @db.Uuid
+  enrollmentChallengeId    String                                 @map("enrollment_challenge_id") @db.Uuid
+  actorUserId              String                                 @map("actor_user_id") @db.Uuid
+  organizationMembershipId String                                 @map("organization_membership_id") @db.Uuid
+  action                   OrganizationOwnerAcceptanceAuditAction @default(OWNER_INVITATION_ACCEPTED)
+  requestId                String                                 @map("request_id") @db.VarChar(128)
+  occurredAt               DateTime                               @map("occurred_at") @db.Timestamptz(6)
+  recordedAt               DateTime                               @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  organization             Organization                           @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_organization_fkey")
+  ownerInvitation          OrganizationOwnerInvitation             @relation(fields: [organizationId, ownerInvitationId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_invitation_fkey")
+  actorUser                User                                   @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_user_fkey")
+  organizationMembership   OrganizationMembership                 @relation(fields: [organizationId, organizationMembershipId, actorUserId], references: [organizationId, id, userId], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_membership_fkey")
+  enrollmentChallenge      OrganizationOwnerEnrollmentChallenge    @relation(fields: [organizationId, enrollmentChallengeId, ownerInvitationId, actorUserId], references: [organizationId, id, ownerInvitationId, userId], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_challenge_fkey")
+
+  @@unique([organizationId, ownerInvitationId], map: "owner_acceptance_audit_events_org_invitation_key")
+  @@index([organizationId, actorUserId, recordedAt(sort: Desc), id], map: "owner_acceptance_audit_events_org_actor_time_idx")
+  @@index([organizationId, organizationMembershipId, recordedAt(sort: Desc), id], map: "owner_acceptance_audit_events_org_membership_time_idx")
+  @@index([requestId], map: "owner_acceptance_audit_events_request_idx")
+  @@map("organization_owner_acceptance_audit_events")
 }
 
 /// Durable delivery reservation for one owner invitation. A row records administrator-authorized
