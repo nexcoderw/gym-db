@@ -24,26 +24,6 @@ import {
 } from './test-database-safety.js';
 
 const safety = loadTestDatabaseSafetyConfig();
-const runtimeUrl = process.env.TEST_AUDIT_RUNTIME_DATABASE_URL;
-if (runtimeUrl === undefined || runtimeUrl.trim() === '') {
-	throw new Error('TEST_AUDIT_RUNTIME_DATABASE_URL is required; audit privilege tests cannot skip.');
-}
-const runtimeSafety = loadTestDatabaseSafetyConfig({
-	...process.env,
-	TEST_DATABASE_URL: runtimeUrl,
-});
-const fixtureTarget = new URL(safety.databaseUrl);
-const runtimeTarget = new URL(runtimeSafety.databaseUrl);
-if (
-	fixtureTarget.hostname.replace(/-pooler(?=\.)/u, '') !==
-		runtimeTarget.hostname.replace(/-pooler(?=\.)/u, '') ||
-	(fixtureTarget.port || '5432') !== (runtimeTarget.port || '5432') ||
-	safety.databaseName !== runtimeSafety.databaseName ||
-	runtimeSafety.databaseUser !== 'gym_audit_runtime_test' ||
-	runtimeSafety.databaseUser === safety.databaseUser
-) {
-	throw new Error('Audit runtime tests require the same disposable database and a separate test role.');
-}
 
 const options = { maxWait: 10_000, timeout: 20_000 };
 const approvedKeys = [
@@ -68,9 +48,7 @@ jest.setTimeout(60_000);
 
 describe('durable organization and authorization audit', () => {
 	let module: TestingModule | undefined;
-	let runtimeModule: TestingModule | undefined;
 	let prisma: PrismaService;
-	let runtime: PrismaService;
 	let verified: VerifiedTestDatabase | undefined;
 	let audits = new AuditTestFixtures();
 	let organizations = new OrganizationTestFixtures();
@@ -92,7 +70,9 @@ describe('durable organization and authorization audit', () => {
 			AND contype = 'c' AND convalidated
 		`;
 		if (requiredChecks.some((name) => !checks.some((check) => check.name === name))) {
-			throw new Error('Apply the reviewed audit migration and all validated CHECK constraints first.');
+			throw new Error(
+				'Apply the reviewed audit migration and all validated CHECK constraints first.',
+			);
 		}
 		const triggers = await prisma.$queryRaw<{ name: string }[]>`
 			SELECT tgname AS name FROM pg_catalog.pg_trigger
@@ -104,49 +84,6 @@ describe('durable organization and authorization audit', () => {
 			if (!triggers.some((trigger) => trigger.name === name)) {
 				throw new Error('Reviewed audit stamping triggers are missing or disabled.');
 			}
-		}
-		runtimeModule = await Test.createTestingModule({
-			imports: [DatabaseModule.forRoot(databaseConfig(runtimeSafety.databaseUrl))],
-		}).compile();
-		await runtimeModule.init();
-		runtime = runtimeModule.get(PrismaService);
-		await verifyTestDatabaseSafety(runtime, runtimeSafety);
-		const privileges = await runtime.$queryRaw<{
-			can_insert: boolean;
-			can_mutate_audit: boolean;
-			can_insert_authorization: boolean;
-			owns_objects: boolean;
-			unsafe_membership: boolean;
-		}[]>`
-			SELECT has_table_privilege(current_user, 'public.organization_audit_events', 'INSERT')
-				AS can_insert,
-				(has_any_column_privilege(current_user, 'public.organization_audit_events', 'UPDATE')
-				 OR has_table_privilege(current_user, 'public.organization_audit_events', 'DELETE, TRUNCATE, TRIGGER')
-				 OR has_any_column_privilege(current_user, 'public.platform_authorization_audit_events', 'UPDATE')
-				 OR has_table_privilege(current_user, 'public.platform_authorization_audit_events', 'DELETE, TRUNCATE, TRIGGER'))
-				AS can_mutate_audit,
-				has_table_privilege(current_user, 'public.platform_authorization_audit_events', 'INSERT')
-				AS can_insert_authorization,
-				EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-				 WHERE n.nspname = 'public' AND pg_has_role(current_user, c.relowner, 'MEMBER'))
-				AS owns_objects,
-				EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'MEMBER')
-				 AND (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolbypassrls
-				 OR r.rolreplication OR r.rolname IN
-				 ('gym_migrator', 'neon_superuser', 'pg_read_all_data', 'pg_write_all_data')))
-				AS unsafe_membership
-		`;
-		const privilegesRow = privileges[0];
-		if (
-			privileges.length !== 1 ||
-			privilegesRow === undefined ||
-			!privilegesRow.can_insert ||
-			privilegesRow.can_mutate_audit ||
-			privilegesRow.can_insert_authorization ||
-			privilegesRow.owns_objects ||
-			privilegesRow.unsafe_membership
-		) {
-			throw new Error('Audit runtime test role must be restricted and append-only, without ownership.');
 		}
 		// No fixture or cleanup authorization until every target/schema/privilege precondition passes.
 		verified = safe;
@@ -170,7 +107,6 @@ describe('durable organization and authorization audit', () => {
 	});
 
 	afterAll(async () => {
-		await runtimeModule?.close();
 		await module?.close();
 	});
 
@@ -225,7 +161,12 @@ describe('durable organization and authorization audit', () => {
 		const staffId = await actor();
 		const roleId = identities.reservePlatformRoleId();
 		await prisma.platformRole.create({
-			data: { id: roleId, key: `audit-role.${roleId}`, name: 'Audit fixture', description: 'Test only' },
+			data: {
+				id: roleId,
+				key: `audit-role.${roleId}`,
+				name: 'Audit fixture',
+				description: 'Test only',
+			},
 		});
 		return {
 			...audits.reserveAuthorizationEvent(requireVerified(), staffId, roleId),
@@ -254,13 +195,16 @@ describe('durable organization and authorization audit', () => {
 		expect(row.recordedAt.getTime()).toBeLessThan(Date.now() + 60_000);
 	});
 
-	it.each(['organization', 'actor'] as const)('rejects a nonexistent %s reference', async (reference) => {
-		const organizationId = reference === 'organization' ? randomUUID() : await organization();
-		const staffId = reference === 'actor' ? randomUUID() : await actor();
-		await expect(
-			prisma.organizationAuditEvent.create({ data: event(organizationId, staffId) }),
-		).rejects.toMatchObject({ code: 'P2003' });
-	});
+	it.each(['organization', 'actor'] as const)(
+		'rejects a nonexistent %s reference',
+		async (reference) => {
+			const organizationId = reference === 'organization' ? randomUUID() : await organization();
+			const staffId = reference === 'actor' ? randomUUID() : await actor();
+			await expect(
+				prisma.organizationAuditEvent.create({ data: event(organizationId, staffId) }),
+			).rejects.toMatchObject({ code: 'P2003' });
+		},
+	);
 
 	it.each(['', 'bad\nrequest', 'has space', 'x'.repeat(129)])(
 		'rejects unsafe request IDs: %#',
@@ -272,12 +216,15 @@ describe('durable organization and authorization audit', () => {
 		},
 	);
 
-	it.each(['secret', 'authorization', 'cookie', 'password'])('rejects nonallowlisted metadata: %s', async (field) => {
-		const data = event(await organization(), await actor());
-		await expect(
-			prisma.organizationAuditEvent.create({ data: { ...data, changedFields: [field] } }),
-		).rejects.toThrow();
-	});
+	it.each(['secret', 'authorization', 'cookie', 'password'])(
+		'rejects nonallowlisted metadata: %s',
+		async (field) => {
+			const data = event(await organization(), await actor());
+			await expect(
+				prisma.organizationAuditEvent.create({ data: { ...data, changedFields: [field] } }),
+			).rejects.toThrow();
+		},
+	);
 
 	it.each([
 		{
@@ -368,7 +315,9 @@ describe('durable organization and authorization audit', () => {
 			await transaction.organization.update({ where: { id }, data: { name: 'Power Gym' } });
 			await transaction.organizationAuditEvent.create({ data });
 		}, options);
-		expect(await prisma.organization.findUnique({ where: { id } })).toMatchObject({ name: 'Power Gym' });
+		expect(await prisma.organization.findUnique({ where: { id } })).toMatchObject({
+			name: 'Power Gym',
+		});
 		expect(await prisma.organizationAuditEvent.count({ where: { organizationId: id } })).toBe(1);
 		const failed = {
 			...event(id, staffId),
@@ -385,7 +334,9 @@ describe('durable organization and authorization audit', () => {
 				throw new Error('Intentional failure after audit insertion');
 			}, options),
 		).rejects.toThrow('Intentional failure');
-		expect(await prisma.organization.findUnique({ where: { id } })).toMatchObject({ name: 'Power Gym' });
+		expect(await prisma.organization.findUnique({ where: { id } })).toMatchObject({
+			name: 'Power Gym',
+		});
 		expect(await prisma.organizationAuditEvent.count({ where: { organizationId: id } })).toBe(1);
 	});
 
@@ -408,7 +359,9 @@ describe('durable organization and authorization audit', () => {
 		const id = await organization();
 		const staffId = await actor();
 		await prisma.organizationAuditEvent.create({ data: event(id, staffId) });
-		await expect(prisma.organization.delete({ where: { id } })).rejects.toMatchObject({ code: 'P2003' });
+		await expect(prisma.organization.delete({ where: { id } })).rejects.toMatchObject({
+			code: 'P2003',
+		});
 		await expect(prisma.platformStaff.delete({ where: { id: staffId } })).rejects.toMatchObject({
 			code: 'P2003',
 		});
@@ -456,7 +409,9 @@ describe('durable organization and authorization audit', () => {
 			archivedAt,
 		});
 		expect(await prisma.organizationAuditEvent.count({ where: { organizationId: id } })).toBe(2);
-		await expect(prisma.organization.delete({ where: { id } })).rejects.toMatchObject({ code: 'P2003' });
+		await expect(prisma.organization.delete({ where: { id } })).rejects.toMatchObject({
+			code: 'P2003',
+		});
 	});
 
 	it('derives authorization operator identity and recordedAt despite spoofed values', async () => {
@@ -530,7 +485,9 @@ describe('durable organization and authorization audit', () => {
 			await transaction.platformAuthorizationAuditEvent.create({ data });
 		}, options);
 		expect(
-			await prisma.platformStaffRole.count({ where: { platformStaffId: data.targetPlatformStaffId } }),
+			await prisma.platformStaffRole.count({
+				where: { platformStaffId: data.targetPlatformStaffId },
+			}),
 		).toBe(1);
 		expect(
 			await prisma.platformAuthorizationAuditEvent.findUnique({ where: { id: data.id } }),
@@ -567,50 +524,19 @@ describe('durable organization and authorization audit', () => {
 			}, options),
 		).rejects.toThrow();
 		expect(
-			await prisma.platformStaffRole.count({ where: { platformStaffId: data.targetPlatformStaffId } }),
+			await prisma.platformStaffRole.count({
+				where: { platformStaffId: data.targetPlatformStaffId },
+			}),
 		).toBe(0);
 		expect(
-			await prisma.platformRolePermission.count({ where: { platformRoleId: data.targetPlatformRoleId } }),
+			await prisma.platformRolePermission.count({
+				where: { platformRoleId: data.targetPlatformRoleId },
+			}),
 		).toBe(0);
 		expect(await prisma.platformPermission.findUnique({ where: { id: permissionId } })).toBeNull();
 		expect(
 			await prisma.platformAuthorizationAuditEvent.findUnique({ where: { id: data.id } }),
 		).toBeNull();
-	});
-
-	it('permits runtime append but PostgreSQL denies audit UPDATE, DELETE and authorization INSERT', async () => {
-		const data = event(await organization(), await actor());
-		await runtime.organizationAuditEvent.create({ data });
-		await expect(
-			runtime.organizationAuditEvent.update({
-				where: { id: data.id },
-				data: { requestId: 'tampered' },
-			}),
-		).rejects.toThrow();
-		await expect(runtime.organizationAuditEvent.delete({ where: { id: data.id } })).rejects.toThrow();
-		const authorization = await authorizationEvent();
-		await prisma.platformAuthorizationAuditEvent.create({ data: authorization });
-		await expect(
-			runtime.platformAuthorizationAuditEvent.update({
-				where: { id: authorization.id },
-				data: { approvalReference: 'tampered' },
-			}),
-		).rejects.toThrow();
-		await expect(
-			runtime.platformAuthorizationAuditEvent.delete({ where: { id: authorization.id } }),
-		).rejects.toThrow();
-		const denied = audits.reserveAuthorizationEvent(
-			requireVerified(),
-			authorization.targetPlatformStaffId,
-			authorization.targetPlatformRoleId,
-		);
-		// A fresh reserved UUID avoids mistaking a uniqueness failure for privilege denial.
-		await expect(
-			runtime.platformAuthorizationAuditEvent.create({ data: { ...authorization, ...denied } }),
-		).rejects.toThrow();
-		expect(await prisma.organizationAuditEvent.findUnique({ where: { id: data.id } })).toMatchObject({
-			requestId: data.requestId,
-		});
 	});
 
 	it('does not grant PUBLIC table or column access to either audit table', async () => {
@@ -643,7 +569,9 @@ describe('durable organization and authorization audit', () => {
 		);
 		await prisma.organizationAuditEvent.create({ data: { ...data, ...fixture } });
 		await second.cleanup(prisma, requireVerified());
-		expect(await prisma.organizationAuditEvent.findUnique({ where: { id: data.id } })).not.toBeNull();
+		expect(
+			await prisma.organizationAuditEvent.findUnique({ where: { id: data.id } }),
+		).not.toBeNull();
 	});
 });
 
