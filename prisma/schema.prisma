@@ -232,6 +232,7 @@ model OrganizationOwnershipAuditEvent {
 
   @@index([organizationId, ownerInvitationId, recordedAt(sort: Desc), id], map: "organization_ownership_audit_events_org_invitation_time_idx")
   @@index([organizationId, actorPlatformStaffId, recordedAt(sort: Desc), id], map: "organization_ownership_audit_events_org_actor_time_idx")
+  @@index([organizationId, action, recordedAt(sort: Desc), id], map: "organization_ownership_audit_events_org_action_time_idx")
   @@index([organizationId, recordedAt(sort: Desc), id], map: "organization_ownership_audit_events_org_time_idx")
   @@index([requestId], map: "organization_ownership_audit_events_request_idx")
   @@map("organization_ownership_audit_events")
