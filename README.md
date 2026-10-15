@@ -739,8 +739,8 @@ npm run build
 ```
 
 Any other disposable database used by bootstrap tests must receive the reviewed migrations via
-its own verified migration URL. Do not point those tests at gym_dev. Audit privilege tests require
-the distinct append-only gym_audit_runtime_test role in gym_test as described below.
+its own verified migration URL. Do not point those tests at gym_dev. Organization and authorization
+audit integration tests use the existing restricted `gym_test` connection and safety marker.
 
 The following targeted runtime grants address missing organization write/audit privileges, not
 superadmin identity. Run them only after reviewing gym_app membership/ownership and existing ACLs.
@@ -781,14 +781,13 @@ requires independent approval and is not silently added to that contract.
 
 ### Privilege review and approved role responsibilities
 
-| Role | Access expectations |
-| --- | --- |
+| Role                       | Access expectations                                                                                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | gym_app (platform runtime) | Approved identity/session access; organizations SELECT/INSERT/UPDATE; organization audit SELECT/INSERT only; no RBAC DML, no authorization-audit INSERT, no audit UPDATE/DELETE/TRUNCATE/TRIGGER, no DDL/ownership. |
-| gym_migrator | Human-controlled DDL/grants only; never API or provisioning credentials. |
-| gym_security_operator | Separate human-authorized login; narrow eligibility reads and RBAC SELECT/INSERT plus authorization-audit SELECT/INSERT; no audit UPDATE/DELETE, no DDL/ownership/admin or runtime credential reuse. |
-| gym_test | Independently verified disposable gym_test only; explicitly authorized fixture cleanup, not production privileges. |
-| gym_audit_runtime_test | Same marked gym_test, separate append-only connection for actual privilege-denial tests; no cleanup/DDL/role memberships. |
-| future tenant role | No global registry or either audit-table grants. Future tenant policies require separate reviewed isolation work. |
+| gym_migrator               | Human-controlled DDL/grants only; never API or provisioning credentials.                                                                                                                                            |
+| gym_security_operator      | Separate human-authorized login; narrow eligibility reads and RBAC SELECT/INSERT plus authorization-audit SELECT/INSERT; no audit UPDATE/DELETE, no DDL/ownership/admin or runtime credential reuse.                |
+| gym_test                   | Independently verified disposable gym_test only; explicitly authorized fixture cleanup, not production privileges.                                                                                                  |
+| future tenant role         | No global registry or either audit-table grants. Future tenant policies require separate reviewed isolation work.                                                                                                   |
 
 Roles must exist under human control before role-specific grant SQL is approved. Inherited membership,
 column-level ACLs, existing broad grants and migrator default privileges can defeat a table REVOKE;
@@ -842,12 +841,11 @@ personal/business data; privacy owners must approve purpose/retention and contro
 
 ### Disposable test authorization and post-review commands
 
-`organization-audit.integration.spec.ts` requires both TEST_DATABASE_URL (existing gym_test cleanup
-role) and TEST_AUDIT_RUNTIME_DATABASE_URL (gym_audit_runtime_test, **same** gym_test database).
-Both connections independently verify the existing human-provisioned TEST_DATABASE_MARKER through
-the live connection before writes. This is not another branch/database or production runtime URL.
-Setup fails on missing schema/checks/triggers, wrong target or unsafe runtime privileges; it never
-skips a missing prerequisite. Configure the extra test connection only in ignored `.env.test.local`.
+`organization-audit.integration.spec.ts` uses `TEST_DATABASE_URL` and independently verifies the
+existing human-provisioned `TEST_DATABASE_MARKER` through the live connection before writes. This is
+the existing disposable `gym_test` database, not another branch/database or a production runtime URL.
+Setup fails on missing schema, checks, triggers, a wrong target or an unsafe test role; it never skips
+a missing prerequisite.
 
 After SQL review and explicit isolated deployment approval, the human migrator deploys to gym_test,
 then an authorized owner applies the separately approved, **gym_test-only** fixture grants:
@@ -857,17 +855,12 @@ GRANT SELECT, INSERT, DELETE ON TABLE public.organization_audit_events,
   public.platform_authorization_audit_events TO gym_test;
 GRANT USAGE ON TYPE public.organization_audit_action,
   public.platform_authorization_audit_action, public.platform_authorization_audit_outcome TO gym_test;
-REVOKE ALL ON TABLE public.organization_audit_events,
-  public.platform_authorization_audit_events FROM gym_audit_runtime_test;
-GRANT SELECT, INSERT ON TABLE public.organization_audit_events TO gym_audit_runtime_test;
-GRANT USAGE ON TYPE public.organization_audit_action, public.organization_status TO gym_audit_runtime_test;
 ```
 
-The test role also requires existing identity/RBAC/organization fixture grants. The separate runtime
-test role needs CONNECT and public-schema USAGE without CREATE; no inherited cleanup/owner/migrator
-membership. Audit FK enforcement needs no broad access to parent tables for this append-only role.
-Authorization tables intentionally have no runtime-test DML grant. If default privileges granted
-more rights, remove them before testing. Never copy fixture DELETE grants into gym_dev/gym_prod.
+The test role also requires existing identity/RBAC/organization fixture grants. Because the same
+restricted role performs fixture cleanup, this suite does not claim to prove runtime privilege denial
+for an independent append-only login. Review `gym_app` effective privileges separately with the
+targeted ACL query above. Never copy fixture DELETE grants into `gym_dev` or `gym_prod`.
 
 After review only, in dependency order:
 
@@ -887,11 +880,13 @@ npm run build
 
 The real PostgreSQL suite covers action/metadata/checks/FKs, forged operator/clock replacement,
 organization+audit commit/rollback, authorization+assignment atomicity, failed-audit rollback,
-runtime privilege denial, organization and audit PUBLIC ACLs, and scoped sentinel preservation. It reuses the existing safety,
+organization and audit PUBLIC ACLs, and scoped sentinel preservation. It reuses the existing safety,
 identity and organization fixtures. Audit cleanup reserves UUIDs and matches exact IDs plus parent
-identifiers/correlation before deleting; audit cleanup precedes referenced parent cleanup. The
-existing organization suite covers the three checks and all 31 reserved slugs. These are authored
-tests, not passing evidence; strict compilation requires human client generation first.
+identifiers/correlation before deleting; audit cleanup precedes referenced parent cleanup. Runtime
+append-only privileges remain an environment-specific operational review because the cleanup role
+must delete its own fixtures. The existing organization suite covers the three checks and all 31
+reserved slugs. These are authored tests, not passing evidence; strict compilation requires human
+client generation first.
 
 Only after successful isolated verification, approved normal-target migration/grants and a rebuilt
 public db package may Phase B activate durable API mutations. Keep the local sibling package
