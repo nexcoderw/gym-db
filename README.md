@@ -1260,6 +1260,21 @@ requires the canonical lowercase, trimmed representation. The identity trigger b
 organization, recipient-email or initiating-actor rewrites. The lifecycle checks reserve future SENT
 and ACCEPTED states but do not implement them.
 
+If the generated base invitation migration was applied anywhere before this custom SQL was reviewed,
+do not edit that applied file or resolve its checksum. Apply the unchanged base migration to the
+approved development database, then generate a forward-only migration from the canonical schema:
+
+```bash
+npm run migration:deploy
+npm run migration:create -- --name harden_organization_owner_invitations
+```
+
+The generated forward migration must contain the organization/action/time investigation index. Stop
+before applying it, append the complete reviewed hardening SQL above, and inspect the resulting SQL as
+one unit. Deploy that forward migration to every database that received the incomplete base migration.
+This recovery preserves immutable migration history and gives every environment the same final
+constraints, partial uniqueness, triggers and PUBLIC revocations.
+
 ### Runtime privileges, RLS limitation and disposable tests
 
 Owner invitations contain personal information and access-control intent. Grant no access to normal
