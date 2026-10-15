@@ -78,6 +78,9 @@ describe('organization owner invitation schema contract', () => {
 		expect(audit).toContain(
 			'@@index([organizationId, ownerInvitationId, recordedAt(sort: Desc), id]',
 		);
+		expect(audit).toContain(
+			'@@index([organizationId, action, recordedAt(sort: Desc), id]',
+		);
 		expect(audit).not.toMatch(/token|email|credential|rawRequest|metadata\s+Json/iu);
 	});
 
