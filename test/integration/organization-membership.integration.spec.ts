@@ -5,11 +5,7 @@ import { Test, type TestingModule } from '@nestjs/testing';
 
 import { DatabaseModule } from '../../src/database/database.module.js';
 import { PrismaService } from '../../src/database/prisma.service.js';
-import {
-	OrganizationMembershipStatus,
-	OrganizationStatus,
-	UserStatus,
-} from '../../src/index.js';
+import { OrganizationMembershipStatus, OrganizationStatus, UserStatus } from '../../src/index.js';
 import { OrganizationMembershipTestFixtures } from './organization-membership-test-fixtures.js';
 import { OrganizationTestFixtures } from './organization-test-fixtures.js';
 import { PlatformAdminTestFixtures } from './platform-admin-test-fixtures.js';
@@ -191,23 +187,18 @@ describe('organization ownership and membership foundation', () => {
 		expect(membership.updatedAt).toBeInstanceOf(Date);
 	});
 
-	it(
-		'supports one user in multiple organizations and multiple users in one organization',
-		async () => {
-			const soho = await createOrganization('Soho Gym');
-			const power = await createOrganization('Power Gym');
-			const aline = await createUser();
-			const uwase = await createUser();
-			await createMembership(soho, aline);
-			await createMembership(power, aline);
-			await createMembership(soho, uwase);
+	it('supports one user in multiple organizations and multiple users in one organization', async () => {
+		const soho = await createOrganization('Soho Gym');
+		const power = await createOrganization('Power Gym');
+		const aline = await createUser();
+		const uwase = await createUser();
+		await createMembership(soho, aline);
+		await createMembership(power, aline);
+		await createMembership(soho, uwase);
 
-			expect(await prisma.organizationMembership.count({ where: { userId: aline } })).toBe(2);
-			expect(
-				await prisma.organizationMembership.count({ where: { organizationId: soho } }),
-			).toBe(2);
-		},
-	);
+		expect(await prisma.organizationMembership.count({ where: { userId: aline } })).toBe(2);
+		expect(await prisma.organizationMembership.count({ where: { organizationId: soho } })).toBe(2);
+	});
 
 	it('rejects duplicate memberships and retains uniqueness after revocation', async () => {
 		const organizationId = await createOrganization();
@@ -504,9 +495,7 @@ describe('organization ownership and membership foundation', () => {
 	});
 
 	it('maps the scoped composite foreign keys and organization-leading indexes', async () => {
-		const foreignKeys = await prisma.$queryRaw<
-			{ name: string; definition: string }[]
-		>`
+		const foreignKeys = await prisma.$queryRaw<{ name: string; definition: string }[]>`
 			SELECT conname AS name, pg_get_constraintdef(oid) AS definition
 			FROM pg_catalog.pg_constraint
 			WHERE conrelid = 'public.organization_membership_roles'::regclass AND contype = 'f'
