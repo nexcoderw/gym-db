@@ -1081,6 +1081,246 @@ authorized onboarding API. Membership rows link personal identity to organizatio
 tenant-scoped access, approved retention, audited privileged access and reviewed erasure handling;
 archiving or revocation is not legal erasure.
 
+## Secure organization-owner invitations (Step 16, database gate)
+
+`OrganizationOwnerInvitation` is a NEXCODE control-plane offer to begin onboarding a gym owner. It
+does not create or activate a `User`, `OrganizationMembership`, organization OWNER role assignment,
+credential, tenant session or platform permission. The normalized intended email remains independent
+of `User.email`: matching an existing account is not identity proof and must never reset or overwrite
+that account. One person may be invited to several organizations, so email is not globally unique.
+
+The invitation lifecycle maps to `organization_owner_invitation_status`:
+
+- `PENDING_DELIVERY` is the only state created in Step 16. No token or delivery timestamps exist.
+- `SENT` is reserved for a future approved delivery operation with a token digest, issue time and
+  bounded expiry. Plaintext tokens are never persisted or returned by an ordinary API response.
+- `ACCEPTED` is reserved for a future verified claim transaction and cannot be reused.
+- `REVOKED` invalidates any digest but does not revoke a User, membership or established ownership.
+
+Expiration is derived from `expires_at`; no state-changing GET is required. The initial application
+policy may create invitations only for PENDING or ACTIVE organizations. SUSPENDED and ARCHIVED
+organizations are denied by the API. This lifecycle eligibility is separate from tenant-login
+eligibility and a PENDING organization remains non-operational.
+
+`OrganizationOwnershipAuditEvent` is dedicated owner-onboarding history. Initial actions are only
+`INVITATION_CREATED` and `INVITATION_REVOKED`; lifecycle audit actions for organizations are not
+reused. Its composite `(organization_id, owner_invitation_id)` foreign key references the invitation's
+scoped unique key, preventing an audit from naming an invitation from another organization. The
+direct Organization and PlatformStaff references are also restrictive. Metadata is limited to the
+previous/resulting invitation states, request identifier and timestamps; token material, credentials,
+email OTPs, recipient email and raw requests are deliberately absent.
+
+Creation and revocation must persist the invitation change and its successful ownership audit in one
+short database transaction. An audit failure rolls back the invitation change, and a persistence
+failure never leaves a false success event. Email is an external side effect and must never execute
+inside that transaction. No owner-acceptance page or API currently exists, so delivery remains
+disabled and new records remain PENDING_DELIVERY. Do not call the platform-email-OTP transport or send
+an unusable link.
+
+### Gate order and generated migration review
+
+Gate A is the locally generated, unapplied
+`20261015100212_organization_membership_foundation` migration. It must be reviewed first. Confirm it
+contains the four documented organization-role checks, scoped composite foreign keys and PUBLIC
+revocations, then apply it to the approved development/test target and regenerate Prisma Client. Do
+not generate it twice and do not edit it after application.
+
+Only after Gate A succeeds may a human generate Gate B from `api/db`:
+
+```bash
+unset DATABASE_URL DIRECT_DATABASE_URL SHADOW_DATABASE_URL
+unset TEST_DATABASE_URL TEST_MIGRATION_DATABASE_URL TEST_DATABASE_MARKER
+
+npm run migration:status
+npm run prisma:format
+npm run prisma:validate
+npm run migration:create -- --name organization_owner_invitations
+```
+
+Stop after create-only generation. Reject any reset, drop, seed, data rewrite, cascade, edit to an
+existing table beyond relation constraints, or automatic membership/role/User creation. The draft
+must add exactly the two enums, invitation table, ownership-audit table, restrictive foreign keys,
+scoped unique key and organization-leading indexes represented by the canonical schema. Add the
+following reviewed SQL only to that new, unapplied Gate B draft after its generated table statements:
+
+```sql
+ALTER TABLE public.organization_owner_invitations
+  ADD CONSTRAINT organization_owner_invitations_email_check CHECK (
+    char_length(invited_email::text) BETWEEN 3 AND 254
+    AND invited_email::text = lower(btrim(invited_email::text))
+  ),
+  ADD CONSTRAINT organization_owner_invitations_display_name_nonblank_check CHECK (
+    char_length(btrim(invited_display_name,
+      U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+    )) > 0
+  ),
+  ADD CONSTRAINT organization_owner_invitations_lifecycle_check CHECK ((
+    CASE status
+      WHEN 'pending_delivery' THEN token_digest IS NULL AND expires_at IS NULL
+        AND sent_at IS NULL AND accepted_at IS NULL AND revoked_at IS NULL
+      WHEN 'sent' THEN token_digest IS NOT NULL AND char_length(token_digest) BETWEEN 64 AND 128
+        AND expires_at IS NOT NULL AND sent_at IS NOT NULL
+        AND accepted_at IS NULL AND revoked_at IS NULL
+      WHEN 'accepted' THEN token_digest IS NULL AND expires_at IS NOT NULL
+        AND sent_at IS NOT NULL AND accepted_at IS NOT NULL AND revoked_at IS NULL
+      WHEN 'revoked' THEN token_digest IS NULL AND accepted_at IS NULL AND revoked_at IS NOT NULL
+      ELSE false
+    END
+  ) IS TRUE),
+  ADD CONSTRAINT organization_owner_invitations_timestamp_order_check CHECK (
+    (sent_at IS NULL OR sent_at >= created_at)
+    AND ((sent_at IS NULL) = (expires_at IS NULL))
+    AND (expires_at IS NULL OR expires_at > sent_at)
+    AND (accepted_at IS NULL OR (
+      accepted_at >= sent_at AND accepted_at <= expires_at
+    ))
+    AND (revoked_at IS NULL OR (
+      revoked_at >= created_at AND (sent_at IS NULL OR revoked_at >= sent_at)
+    ))
+  );
+
+CREATE UNIQUE INDEX organization_owner_invitations_outstanding_email_key
+  ON public.organization_owner_invitations (organization_id, invited_email)
+  WHERE status IN ('pending_delivery', 'sent');
+
+CREATE FUNCTION public.guard_organization_owner_invitation_identity()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, public
+AS $function$
+BEGIN
+  IF NEW.organization_id IS DISTINCT FROM OLD.organization_id
+    OR NEW.invited_email IS DISTINCT FROM OLD.invited_email
+    OR NEW.invited_by_platform_staff_id IS DISTINCT FROM OLD.invited_by_platform_staff_id
+  THEN
+    RAISE EXCEPTION 'organization owner invitation identity is immutable'
+      USING ERRCODE = '23514',
+        CONSTRAINT = 'organization_owner_invitation_identity_guard';
+  END IF;
+  RETURN NEW;
+END;
+$function$;
+
+CREATE TRIGGER organization_owner_invitation_identity_guard
+BEFORE UPDATE ON public.organization_owner_invitations
+FOR EACH ROW EXECUTE FUNCTION public.guard_organization_owner_invitation_identity();
+
+ALTER TABLE public.organization_ownership_audit_events
+  ADD CONSTRAINT organization_ownership_audit_events_request_check CHECK (
+    char_length(request_id) BETWEEN 1 AND 128
+    AND request_id COLLATE "C" !~ '[^A-Za-z0-9._:-]'
+  ),
+  ADD CONSTRAINT organization_ownership_audit_events_metadata_check CHECK ((
+    CASE action
+      WHEN 'invitation_created' THEN previous_invitation_status IS NULL
+        AND resulting_invitation_status = 'pending_delivery'
+      WHEN 'invitation_revoked' THEN previous_invitation_status IN ('pending_delivery', 'sent')
+        AND resulting_invitation_status = 'revoked'
+      ELSE false
+    END
+  ) IS TRUE);
+
+CREATE FUNCTION public.stamp_organization_ownership_audit_event()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, public
+AS $function$
+BEGIN
+  NEW.recorded_at := clock_timestamp();
+  RETURN NEW;
+END;
+$function$;
+
+CREATE TRIGGER organization_ownership_audit_stamp
+BEFORE INSERT ON public.organization_ownership_audit_events
+FOR EACH ROW EXECUTE FUNCTION public.stamp_organization_ownership_audit_event();
+
+REVOKE ALL ON TABLE
+  public.organization_owner_invitations,
+  public.organization_ownership_audit_events
+FROM PUBLIC;
+
+REVOKE ALL ON TYPE
+  public.organization_owner_invitation_status,
+  public.organization_ownership_audit_action
+FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION
+  public.guard_organization_owner_invitation_identity(),
+  public.stamp_organization_ownership_audit_event()
+FROM PUBLIC;
+```
+
+The partial unique index serializes concurrent outstanding invitations for one organization/email
+without preventing the same person from being invited to another gym or a later reinvitation after
+the prior row is ACCEPTED/REVOKED. CITEXT provides case-insensitive comparison while the named check
+requires the canonical lowercase, trimmed representation. The identity trigger blocks silent
+organization, recipient-email or initiating-actor rewrites. The lifecycle checks reserve future SENT
+and ACCEPTED states but do not implement them.
+
+### Runtime privileges, RLS limitation and disposable tests
+
+Owner invitations contain personal information and access-control intent. Grant no access to normal
+gym tenant roles. The NEXCODE platform runtime role requires a separately reviewed control-plane
+grant equivalent to SELECT/INSERT/UPDATE on `organization_owner_invitations`, SELECT/INSERT only on
+`organization_ownership_audit_events`, USAGE on the two enum types and trigger-function execution.
+It must receive no DELETE, UPDATE or TRUNCATE on the audit table. Prefer column-specific invitation
+UPDATE privileges for status/token/timestamp fields. Verify actual ownership, inherited roles,
+BYPASSRLS and default privileges before production; table grants make routine audit access
+append-only but cannot make infrastructure immutable from a database owner. No permissive RLS policy
+is introduced, and `TenantTransactionService` alone is not platform authorization.
+
+After Gate B review and explicit approval, deploy both gates to the independently marked disposable
+test database. Its authorized owner may apply only these test-fixture privileges:
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+  public.organization_owner_invitations,
+  public.organization_ownership_audit_events
+TO gym_test;
+
+GRANT USAGE ON TYPE
+  public.organization_owner_invitation_status,
+  public.organization_ownership_audit_action
+TO gym_test;
+
+GRANT EXECUTE ON FUNCTION
+  public.guard_organization_owner_invitation_identity(),
+  public.stamp_organization_ownership_audit_event()
+TO gym_test;
+```
+
+DELETE exists only so tests can remove their explicitly tracked invitation/audit UUIDs. Never copy it
+to a runtime or production audit role. Integration setup verifies the independent database marker,
+tables, named checks, partial index and triggers before authorizing fixture writes. Cleanup removes
+tracked audit children before invitations, then existing fixture managers remove tracked
+organizations and platform identities. It never performs table-wide cleanup.
+
+Human verification after the approved Gate B migration is deployed:
+
+```bash
+npm run migration:test:deploy
+# Apply the reviewed gym_test-only grants above in Neon SQL Editor.
+npm run prisma:generate
+npm run format:check
+npm run lint
+npm run typecheck
+npm run test:unit
+npm run test:integration
+npm run build
+```
+
+Do not activate the API integration until the migrated package is generated, verified and made
+available to `gym-api` through its approved sibling/package workflow. A future acceptance transaction
+must independently authenticate/verify the recipient, safely resolve or create the global User,
+establish the organization-scoped system OWNER role and membership through the existing composite
+keys, consume the invitation and append a dedicated ownership audit atomically. It must reject
+expired/revoked/used tokens and must not overwrite an existing account. Owner revocation/transfer and
+last-owner protection remain future work requiring transaction-safe locking and a reviewed recovery
+procedure; current zero-owner organizations remain valid.
+
 ## Engineering rules
 
 All contributors and agents must read `AGENTS.md` and `.agents/README.md`. These rules prohibit agents
