@@ -19,6 +19,16 @@ describe('public package exports', () => {
 			SUSPENDED: 'SUSPENDED',
 			REVOKED: 'REVOKED',
 		});
+		expect(databasePackage.OrganizationOwnerInvitationStatus).toEqual({
+			PENDING_DELIVERY: 'PENDING_DELIVERY',
+			SENT: 'SENT',
+			ACCEPTED: 'ACCEPTED',
+			REVOKED: 'REVOKED',
+		});
+		expect(databasePackage.OrganizationOwnershipAuditAction).toEqual({
+			INVITATION_CREATED: 'INVITATION_CREATED',
+			INVITATION_REVOKED: 'INVITATION_REVOKED',
+		});
 		expect(databasePackage.OrganizationAuditAction).toEqual({
 			CREATE: 'CREATE',
 			UPDATE: 'UPDATE',
