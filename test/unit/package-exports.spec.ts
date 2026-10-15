@@ -13,6 +13,12 @@ describe('public package exports', () => {
 			SUSPENDED: 'SUSPENDED',
 			ARCHIVED: 'ARCHIVED',
 		});
+		expect(databasePackage.OrganizationMembershipStatus).toEqual({
+			PENDING: 'PENDING',
+			ACTIVE: 'ACTIVE',
+			SUSPENDED: 'SUSPENDED',
+			REVOKED: 'REVOKED',
+		});
 		expect(databasePackage.OrganizationAuditAction).toEqual({
 			CREATE: 'CREATE',
 			UPDATE: 'UPDATE',
