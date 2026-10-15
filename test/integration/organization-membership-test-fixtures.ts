@@ -33,27 +33,24 @@ export class OrganizationMembershipTestFixtures {
 		const roleIds = [...this.#roleIds];
 		if (membershipIds.length === 0 && roleIds.length === 0) return;
 
-		await prisma.$transaction(
-			async (transaction) => {
-				await transaction.organizationMembershipRole.deleteMany({
-					where: {
-						OR: [
-							{ organizationMembershipId: { in: membershipIds } },
-							{ organizationRoleId: { in: roleIds } },
-						],
-					},
+		await prisma.$transaction(async (transaction) => {
+			await transaction.organizationMembershipRole.deleteMany({
+				where: {
+					OR: [
+						{ organizationMembershipId: { in: membershipIds } },
+						{ organizationRoleId: { in: roleIds } },
+					],
+				},
+			});
+			if (roleIds.length > 0) {
+				await transaction.organizationRole.deleteMany({ where: { id: { in: roleIds } } });
+			}
+			if (membershipIds.length > 0) {
+				await transaction.organizationMembership.deleteMany({
+					where: { id: { in: membershipIds } },
 				});
-				if (roleIds.length > 0) {
-					await transaction.organizationRole.deleteMany({ where: { id: { in: roleIds } } });
-				}
-				if (membershipIds.length > 0) {
-					await transaction.organizationMembership.deleteMany({
-						where: { id: { in: membershipIds } },
-					});
-				}
-			},
-			TRANSACTION_OPTIONS,
-		);
+			}
+		}, TRANSACTION_OPTIONS);
 
 		this.#membershipIds.clear();
 		this.#roleIds.clear();
