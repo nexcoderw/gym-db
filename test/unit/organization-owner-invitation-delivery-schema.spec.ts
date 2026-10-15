@@ -5,6 +5,20 @@ describe('organization owner invitation delivery schema contract', () => {
 		return readFile(new URL('../../prisma/schema.prisma', import.meta.url), 'utf8');
 	}
 
+	it('keeps every explicit database identifier within PostgreSQL’s 63-byte limit', async () => {
+		const source = await schema();
+		const mappings = [...source.matchAll(/(?:@{1,2}map\(|\bmap:\s*)"([^"]+)"/gu)];
+		expect(mappings.length).toBeGreaterThan(0);
+		const oversizedNames = mappings.flatMap((match) => {
+			const name = match[1];
+			if (name === undefined) throw new Error('A schema mapping must contain an identifier.');
+			const bytes = Buffer.byteLength(name, 'utf8');
+			return bytes > 63 ? [{ name, bytes }] : [];
+		});
+
+		expect(oversizedNames).toEqual([]);
+	});
+
 	it('defines bounded delivery states independently from invitation ownership states', async () => {
 		const source = await schema();
 		const status = /enum OrganizationOwnerInvitationDeliveryStatus \{[\s\S]*?\n\}/u.exec(
@@ -90,7 +104,7 @@ describe('organization owner invitation delivery schema contract', () => {
 			/@relation\(fields: \[organizationId, ownerInvitationId\],[^\n]+references: \[organizationId, id\],[^\n]+onDelete: Restrict,[^\n]+onUpdate: Restrict/u,
 		);
 		expect(delivery).toContain(
-			'@@unique([organizationId, ownerInvitationId], map: "organization_owner_invitation_deliveries_organization_invitation_key")',
+			'@@unique([organizationId, ownerInvitationId], map: "owner_invitation_deliveries_org_invitation_key")',
 		);
 		expect(delivery).toContain(
 			'@@index([organizationId, status, nextAttemptAt, id], map: "organization_owner_invitation_deliveries_org_status_next_id_idx")',
