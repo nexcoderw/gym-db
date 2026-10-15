@@ -908,6 +908,179 @@ conflicting existing state, and records assignment/outcome in the same transacti
 attempts belong in sanitized protected operational monitoring, not falsely committed success events.
 Those CLI/provider changes and their API tests are the next phase, not yet implemented or verified.
 
+## Organization ownership and membership foundation (Step 15)
+
+`OrganizationMembership` connects one global `User` to one `Organization` without copying email,
+display name, password material or verification state. The same user can hold separate memberships in
+Soho Gym and Power Gym, and multiple users can belong to either organization. The database keeps one
+durable membership identity per `(organization_id, user_id)` even after revocation; rejoining must use
+a separately reviewed workflow rather than silently replacing history.
+
+Membership status maps to the lowercase `organization_membership_status` enum:
+
+- `PENDING`: provisioned but not eligible for tenant access.
+- `ACTIVE`: eligible for later authorization evaluation, never sufficient by itself.
+- `SUSPENDED`: retained while organization access is temporarily disabled.
+- `REVOKED`: retained after access removal.
+
+`created_at` and `updated_at` are required timestamptz(6) values. Nullable `activated_at`,
+`suspended_at` and `revoked_at` record lifecycle metadata; status remains authoritative. An ACTIVE
+membership still requires an authenticated active User, verified identity, matching active
+Organization, applicable organization role and future permission, subscription and feature checks.
+A known slug, membership row or client-supplied role name is never authorization.
+
+`OrganizationRole` belongs to exactly one organization. Its key is unique only within that
+organization, so each gym may have its own trusted `owner` role. `owner` means gym-level ownership
+authority for that organization only: it is not PostgreSQL ownership, NEXCODE platform staff,
+`platform.owner`, or authority over another gym. `is_system` records trusted provisioning policy and
+grants nothing by itself. Manager, receptionist, trainer, accountant and custom roles are supported by
+the model but are neither pre-created nor assigned in this step.
+
+`OrganizationMembershipRole` uses `(organization_id, organization_membership_id,
+organization_role_id)` as its primary key. Its two composite foreign keys reference scoped unique
+keys on memberships and roles:
+
+- `(organization_id, organization_membership_id)` references the membership's organization and ID.
+- `(organization_id, organization_role_id)` references the role's organization and ID.
+
+PostgreSQL therefore rejects a Soho Gym membership paired with Power Gym's OWNER role even when both
+global UUIDs exist. All parent relations use `ON DELETE RESTRICT ON UPDATE RESTRICT`; revocation and
+ownership transfer must be explicit, authorized and audited rather than implicit cascade deletion.
+Organization-leading status/creation and role indexes serve tenant administration. The intentional
+user-leading membership index supports discovering organizations for one already verified global
+identity; it is not an all-tenant query permission.
+
+Creating an Organization creates no role, membership, owner, User or platform privilege. Existing
+zero-owner organizations remain valid. A future onboarding workflow must associate a verified global
+identity, create a PENDING membership, provision that organization's system OWNER role, assign it and
+activate only after all required checks. Step 16 must first define a dedicated durable ownership audit
+contract; existing organization lifecycle audit actions must not be reused to disguise ownership
+grants or revocations.
+
+An operational onboarded gym must eventually retain at least one eligible ACTIVE OWNER unless a
+separately authorized recovery or transfer process is in progress. A normal unique constraint cannot
+enforce that invariant safely. The future mutation workflow requires transaction-safe locking and an
+explicit onboarding/operational state or an equivalently reviewed database design. This foundation
+does not add a race-prone count-then-update check and does not invalidate current zero-owner gyms.
+
+### Required migration checks and privilege boundary
+
+The human-generated `organization_membership_foundation` migration must contain the generated enum,
+tables, organization-leading indexes, scoped unique keys and restrictive composite foreign keys. Add
+the following reviewed SQL to that **new, unapplied draft** after its generated table statements:
+
+```sql
+ALTER TABLE public.organization_roles
+  ADD CONSTRAINT organization_roles_key_format_check CHECK (
+    char_length(key) BETWEEN 2 AND 63
+    AND key COLLATE "C" ~ '^[a-z][a-z0-9]*([._-][a-z0-9]+)*$'
+  ),
+  ADD CONSTRAINT organization_roles_name_nonblank_check CHECK (
+    char_length(btrim(name,
+      U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+    )) > 0
+  ),
+  ADD CONSTRAINT organization_roles_description_nonblank_check CHECK (
+    description IS NULL OR char_length(btrim(description,
+      U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF'
+    )) > 0
+  ),
+  ADD CONSTRAINT organization_roles_owner_system_check CHECK (
+    key <> 'owner' OR is_system
+  );
+
+REVOKE ALL ON TABLE
+  public.organization_memberships,
+  public.organization_roles,
+  public.organization_membership_roles
+FROM PUBLIC;
+
+REVOKE ALL ON TYPE public.organization_membership_status FROM PUBLIC;
+```
+
+The varchar definitions enforce upper bounds for role key, name and description. The named checks
+enforce the lower bounds, stable ASCII key grammar, nonblank human text and OWNER reservation for raw
+SQL writers. Review that Prisma emits `organization_memberships_organization_id_key` and
+`organization_roles_organization_id_key` before the two composite foreign keys. Do not replace those
+foreign keys with independent ID-only references, cascade actions, triggers that silently create
+owners, or a seed operation.
+
+These access-control tables must not receive broad schema/table grants. Ordinary tenant runtime
+operations receive no unrestricted DML in this step. `TenantTransactionService` safely installs
+transaction-local organization context but does not prove membership and no complete RLS policy is
+introduced here. Before any tenant API ships, security owners must approve dedicated runtime roles,
+role inheritance and ownership, BYPASSRLS posture, fail-closed policies for missing/wrong
+`app.current_organization_id`, pooled-connection behavior, and a separate audited provisioning path.
+That missing production database authorization boundary is a deployment blocker for tenant access.
+
+### Human migration and disposable-test verification
+
+From `api/db`, first inspect the clean migration history and actual target. The committed
+`20261015093808_repair_audit_contract` migration is separate history; never repurpose or edit it after
+application. Remove stale shell overrides, format and validate the schema, then generate a new
+create-only migration:
+
+```bash
+unset DATABASE_URL DIRECT_DATABASE_URL SHADOW_DATABASE_URL
+unset TEST_DATABASE_URL TEST_MIGRATION_DATABASE_URL TEST_DATABASE_MARKER
+
+npm run migration:status
+npm run prisma:format
+npm run prisma:validate
+npm run migration:create -- --name organization_membership_foundation
+```
+
+Stop after creation and review `migration.sql`. Reject resets, drops, edits to existing User,
+Organization, PlatformStaff/PlatformRole or audit objects, missing mapped names, implicit cascades,
+ID-only assignment foreign keys, unvalidated checks, owner seeds and unexpected data changes. Confirm
+the SQL adds only the new enum/tables/indexes/constraints plus the reviewed custom SQL above. A failed
+deployment rolls forward with a new reviewed migration; do not rewrite applied history. This additive
+schema remains unusable to consumers until the expansion migration is deployed and Prisma Client is
+regenerated. Publish a separately reviewed compatible package release before an external consumer
+depends on the new generated models.
+
+After migration review and explicit disposable-database approval, deploy to independently verified
+`gym_test`, then have its authorized owner apply only these test-fixture grants:
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
+  public.organization_memberships,
+  public.organization_roles,
+  public.organization_membership_roles
+TO gym_test;
+
+GRANT USAGE ON TYPE public.organization_membership_status TO gym_test;
+```
+
+The existing restricted test role must retain its previously reviewed User and Organization fixture
+grants. These DELETE privileges exist only for tracked fixture cleanup in `gym_test`; never copy them
+to production runtime roles. Integration setup verifies the database marker, table/check/composite-FK
+prerequisites and non-administrative role before writes. Cleanup deletes tracked assignments before
+their tracked roles and memberships, then tracked organizations and users. The tests establish
+relational integrity, concurrency behavior and platform-domain separation; without RLS they do not
+prove authorization isolation for a future HTTP API.
+
+Human verification order after migration approval:
+
+```bash
+npm run migration:test:deploy
+# Apply the separately reviewed gym_test-only grants above in Neon SQL Editor.
+npm run prisma:generate
+npm run format:check
+npm run lint
+npm run typecheck
+npm run test:unit
+npm run test:integration
+npm run build
+```
+
+Do not deploy to `gym_dev` or `gym_prod`, publish a package, or start ownership onboarding based only
+on authored tests. Production rollout separately requires approved runtime/RLS privileges, the Step 16
+ownership audit contract, transaction-safe final-owner protection, privacy/retention ownership and an
+authorized onboarding API. Membership rows link personal identity to organizations and require
+tenant-scoped access, approved retention, audited privileged access and reviewed erasure handling;
+archiving or revocation is not legal erasure.
+
 ## Engineering rules
 
 All contributors and agents must read `AGENTS.md` and `.agents/README.md`. These rules prohibit agents
