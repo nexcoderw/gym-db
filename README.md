@@ -389,7 +389,7 @@ Preserve its exact contents/checksum and generate another SQL-only draft using t
 database:
 
 ```bash
-npm run migration:create -- --name enforce_organization_integrity
+npm run migration:create -- --name enforce_organization_integrity_permissions
 ```
 
 Create-only supports an empty migration when the Prisma schema has no changes. Do not accept a reset
@@ -887,7 +887,7 @@ npm run build
 
 The real PostgreSQL suite covers action/metadata/checks/FKs, forged operator/clock replacement,
 organization+audit commit/rollback, authorization+assignment atomicity, failed-audit rollback,
-runtime privilege denial, PUBLIC ACLs and scoped sentinel preservation. It reuses the existing safety,
+runtime privilege denial, organization and audit PUBLIC ACLs, and scoped sentinel preservation. It reuses the existing safety,
 identity and organization fixtures. Audit cleanup reserves UUIDs and matches exact IDs plus parent
 identifiers/correlation before deleting; audit cleanup precedes referenced parent cleanup. The
 existing organization suite covers the three checks and all 31 reserved slugs. These are authored
