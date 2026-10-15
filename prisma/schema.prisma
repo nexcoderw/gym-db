@@ -34,6 +34,15 @@ enum OrganizationStatus {
   @@map("organization_status")
 }
 
+enum OrganizationMembershipStatus {
+  PENDING   @map("pending")
+  ACTIVE    @map("active")
+  SUSPENDED @map("suspended")
+  REVOKED   @map("revoked")
+
+  @@map("organization_membership_status")
+}
+
 enum OrganizationAuditAction {
   CREATE   @map("create")
   UPDATE   @map("update")
@@ -71,6 +80,8 @@ model Organization {
   createdAt   DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
   auditEvents OrganizationAuditEvent[]
+  memberships OrganizationMembership[]
+  roles       OrganizationRole[]
 
   @@index([status, createdAt(sort: Desc), id], map: "organizations_status_created_at_id_idx")
   @@map("organizations")
@@ -88,9 +99,71 @@ model User {
   updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
   passwordCredential PasswordCredential?
   platformStaff      PlatformStaff?
+  organizationMemberships OrganizationMembership[]
 
   @@index([status], map: "users_status_idx")
   @@map("users")
+}
+
+/// Organization-scoped authorization eligibility for one global User. Status is authoritative;
+/// lifecycle timestamps are metadata and do not independently grant access. A revoked identity
+/// remains unique so rejoining requires an explicitly reviewed workflow.
+model OrganizationMembership {
+  id             String                       @id(map: "organization_memberships_pkey") @default(uuid()) @db.Uuid
+  organizationId String                       @map("organization_id") @db.Uuid
+  userId         String                       @map("user_id") @db.Uuid
+  status         OrganizationMembershipStatus @default(PENDING)
+  createdAt      DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  activatedAt    DateTime?                    @map("activated_at") @db.Timestamptz(6)
+  suspendedAt    DateTime?                    @map("suspended_at") @db.Timestamptz(6)
+  revokedAt      DateTime?                    @map("revoked_at") @db.Timestamptz(6)
+  organization   Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_memberships_organization_fkey")
+  user           User                         @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_memberships_user_fkey")
+  roles          OrganizationMembershipRole[]
+
+  @@unique([organizationId, userId], map: "organization_memberships_organization_user_key")
+  @@unique([organizationId, id], map: "organization_memberships_organization_id_key")
+  @@index([organizationId, status, createdAt(sort: Desc), id], map: "organization_memberships_org_status_created_id_idx")
+  @@index([organizationId, createdAt(sort: Desc), id], map: "organization_memberships_org_created_id_idx")
+  @@index([userId, status, createdAt(sort: Desc), id], map: "organization_memberships_user_status_created_id_idx")
+  @@map("organization_memberships")
+}
+
+/// A role definition owned by exactly one Organization. `isSystem` records trusted provisioning
+/// policy but grants nothing by itself; SQL CHECK constraints reserve the `owner` key against custom
+/// role impersonation and validate bounded lowercase role identifiers.
+model OrganizationRole {
+  id             String                       @id(map: "organization_roles_pkey") @default(uuid()) @db.Uuid
+  organizationId String                       @map("organization_id") @db.Uuid
+  key            String                       @db.VarChar(63)
+  name           String                       @db.VarChar(120)
+  description    String?                      @db.VarChar(500)
+  isSystem       Boolean                      @default(false) @map("is_system")
+  createdAt      DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_roles_organization_fkey")
+  memberships    OrganizationMembershipRole[]
+
+  @@unique([organizationId, key], map: "organization_roles_organization_key_key")
+  @@unique([organizationId, id], map: "organization_roles_organization_id_key")
+  @@index([organizationId, isSystem, createdAt(sort: Desc), id], map: "organization_roles_org_system_created_id_idx")
+  @@map("organization_roles")
+}
+
+/// Same-organization composite foreign keys make cross-tenant membership/role assignments
+/// impossible even when a caller supplies individually valid global UUIDs.
+model OrganizationMembershipRole {
+  organizationId         String                 @map("organization_id") @db.Uuid
+  organizationMembershipId String               @map("organization_membership_id") @db.Uuid
+  organizationRoleId     String                 @map("organization_role_id") @db.Uuid
+  assignedAt             DateTime               @default(now()) @map("assigned_at") @db.Timestamptz(6)
+  organizationMembership OrganizationMembership @relation(fields: [organizationId, organizationMembershipId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "organization_membership_roles_membership_fkey")
+  organizationRole       OrganizationRole       @relation(fields: [organizationId, organizationRoleId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "organization_membership_roles_role_fkey")
+
+  @@id([organizationId, organizationMembershipId, organizationRoleId], map: "organization_membership_roles_pkey")
+  @@index([organizationId, organizationRoleId, organizationMembershipId], map: "organization_membership_roles_org_role_membership_idx")
+  @@map("organization_membership_roles")
 }
 
 /// Password material is deliberately separated from public identity data. Values must be hashes
