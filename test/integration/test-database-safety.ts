@@ -36,6 +36,13 @@ export interface VerifiedTestDatabase {
 	readonly [verifiedTestDatabase]: true;
 }
 
+export type TestTablePrivilege = 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE';
+
+export interface TestTablePrivilegeRequirement {
+	readonly tableName: string;
+	readonly privileges: readonly TestTablePrivilege[];
+}
+
 export function assertTestDatabaseWasVerified(
 	token: unknown,
 ): asserts token is VerifiedTestDatabase {
@@ -233,4 +240,33 @@ export async function verifyTestDatabaseSafety(
 		canCreateSchema: identity.can_create_schema,
 		canCreateInPublicSchema: identity.can_create_in_public_schema,
 	});
+}
+
+/**
+ * Fails before fixture writes when the restricted test role has not received a new table's
+ * explicitly reviewed DML grants. Table names and privilege sets come only from authored tests;
+ * PostgreSQL evaluates them as values rather than interpolated SQL identifiers.
+ */
+export async function verifyTestTablePrivileges(
+	prisma: PrismaService,
+	requirements: readonly TestTablePrivilegeRequirement[],
+): Promise<void> {
+	for (const requirement of requirements) {
+		const qualifiedTableName = `public.${requirement.tableName}`;
+		const requestedPrivileges = requirement.privileges.join(',');
+		const rows = await prisma.$queryRaw<{ allowed: boolean }[]>`
+			SELECT has_table_privilege(
+				current_user,
+				${qualifiedTableName},
+				${requestedPrivileges}
+			) AS allowed
+		`;
+
+		if (rows.length !== 1 || rows[0]?.allowed !== true) {
+			throw new Error(
+				`The restricted integration-test role is missing ${requestedPrivileges} on ` +
+					`${qualifiedTableName}. Apply the reviewed gym_test-only grants before running tests.`,
+			);
+		}
+	}
 }
