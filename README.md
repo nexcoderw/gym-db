@@ -1407,6 +1407,176 @@ expired/revoked/used tokens and must not overwrite an existing account. Owner re
 last-owner protection remain future work requiring transaction-safe locking and a reviewed recovery
 procedure; current zero-owner organizations remain valid.
 
+## Owner invitation delivery foundation (Step 18, migration review checkpoint)
+
+Step 18 Phase A is source-complete but deliberately not deployed. The Prisma schema defines
+`OrganizationOwnerInvitationDelivery` as a durable outbox/reservation owned by one Organization and
+one existing invitation. The composite invitation foreign key prevents cross-organization attachment,
+and a unique `(organization_id, owner_invitation_id)` key makes repeated administrative requests
+resolve to the same reservation instead of producing duplicate emails. This record does not grant a
+User, membership, OWNER role, credential or session.
+
+The delivery lifecycle is separate from the invitation lifecycle:
+
+- `QUEUED` is eligible for a future atomic worker claim.
+- `PROCESSING` has one bounded lease and an incremented attempt count.
+- `CONFIRMED` means the provider accepted the API request; it does not prove inbox delivery.
+- `FAILED` records a classified known failure and may carry one bounded future retry.
+- `UNCERTAIN` records an outcome such as an HTTP timeout where blind retry is unsafe.
+
+An invitation remains `PENDING_DELIVERY` until provider acceptance is finalized. Finalization must
+atomically recheck the invitation is still pending, move it to `SENT` with its digest and expiry,
+mark the delivery `CONFIRMED`, and erase recoverable token material. A concurrent revocation wins if
+that eligibility recheck updates no row. PostgreSQL and Resend cannot provide exactly-once delivery;
+stable provider idempotency plus explicit `UNCERTAIN` reconciliation limits, but cannot eliminate,
+that boundary.
+
+`INVITATION_DELIVERY_QUEUED` records the authenticated platform administrator who authorized queueing.
+It keeps both invitation statuses at `PENDING_DELIVERY`. Worker claims, provider acceptance and later
+recipient verification are not falsely attributed to that administrator. Delivery attempt/status
+columns are the durable operational record for worker and provider outcomes. Recipient acceptance
+still requires a future audit design with the verified recipient User as actor.
+
+### Token envelope and retention contract
+
+The future API must generate an opaque token with at least 256 bits of CSPRNG entropy and calculate a
+purpose-separated HMAC digest. Only the digest is copied to the invitation when delivery is confirmed.
+Before delivery, the recoverable token is stored only as authenticated ciphertext with a 96-bit IV,
+128-bit authentication tag, explicit key ID and format version. Associated data must bind at least the
+delivery ID, organization ID, invitation ID and the fixed owner-invitation purpose label.
+
+The encryption key belongs to a server-managed keyring, never this package or the database. New writes
+use the active key; workers may decrypt with retained read keys during rotation. A key cannot be removed
+until no unexpired delivery envelope references it. `CONFIRMED` and terminal `FAILED` rows erase the
+delivery copy of the digest and all encryption fields, then set `token_erased_at`. The invitation keeps
+the digest only after a confirmed `SENT` transition. `UNCERTAIN` may retain its envelope for bounded manual
+provider reconciliation and must never be automatically resent. Expired envelopes require a controlled
+terminal cleanup that preserves non-secret delivery metadata and audit history.
+
+The digest and ciphertext are both sensitive. Neither is permitted in logs, audit metadata, API
+responses, analytics, correlation IDs or exception messages. Database backups may retain historical
+ciphertext, so key retirement and backup retention are part of the operational erasure model.
+
+### Human-generated migration gate
+
+From `api/db`, first verify `.env.migrations.local` targets the intended development `gym_dev` database
+with a separate shadow database. Clear stale shell overrides without printing connection strings:
+
+```bash
+unset DATABASE_URL DIRECT_DATABASE_URL SHADOW_DATABASE_URL
+unset TEST_DATABASE_URL TEST_MIGRATION_DATABASE_URL TEST_DATABASE_MARKER
+
+npm run migration:status
+npm run prisma:format
+npm run prisma:validate
+npm run migration:create -- --name owner_invitation_delivery_foundation
+```
+
+**Stop after create-only generation. Do not apply the migration.** Send the generated
+`migration.sql` for review. It must be additive: the new delivery enum/table/indexes/restrictive
+foreign keys, the one new audit enum value, the reviewed checks/trigger changes below, and PUBLIC
+revocations only. It must not drop or rename existing identity, invitation, membership or audit
+objects. Do not create a duplicate migration if that name already exists, accept a reset prompt, use
+`db push`, or hand-create a timestamped migration directory.
+
+Prisma will not generate the required lifecycle checks or transition guard. During SQL review, the
+draft must receive six validated named checks covering:
+
+- lifecycle metadata for every delivery status;
+- all-or-none lease fields and a positive lease interval;
+- `0 <= attempt_count <= max_attempts`, with a reviewed `max_attempts` range of 1 through 10;
+- all-or-none authenticated-encryption fields, exact 12-byte IV and 16-byte tag sizes, bounded
+  ciphertext/key ID, and a positive format version;
+- expiry and outcome timestamp ordering; and
+- bounded ASCII provider idempotency/message IDs, worker IDs and uppercase error classifications.
+
+The required names are:
+
+```text
+organization_owner_invitation_deliveries_lifecycle_check
+organization_owner_invitation_deliveries_lease_check
+organization_owner_invitation_deliveries_retry_check
+organization_owner_invitation_deliveries_token_material_check
+organization_owner_invitation_deliveries_timestamp_order_check
+organization_owner_invitation_deliveries_bounded_text_check
+```
+
+The reviewed transition trigger must make organization, invitation, requesting administrator,
+provider idempotency key, token digest, token expiry and maximum attempts immutable; reject decreasing
+attempt counts; reject worker processing after the invitation leaves `PENDING_DELIVERY`; and allow
+`CONFIRMED` only after the same invitation is atomically `SENT` with the matching digest and expiry.
+It must permit only the reviewed queue, processing, retry, terminal and reconciliation transitions.
+This trigger is defense in depth; the worker must still use conditional updates and short database
+transactions, and must never hold a transaction open during the Resend HTTP request.
+
+The existing `organization_ownership_audit_events_metadata_check` must be replaced in the same
+reviewed migration so `invitation_delivery_queued` requires both previous and resulting invitation
+status to be `pending_delivery`. Existing creation and revocation branches must remain unchanged.
+PUBLIC must receive no table/type/function privileges for the delivery objects. No environment role
+names belong in the portable migration.
+
+### Runtime and disposable-test privileges
+
+After migration approval and deployment to an explicitly selected target, separately review the
+platform runtime role. The intended minimum is SELECT/INSERT plus narrowly approved UPDATE columns on
+the delivery table; it must not receive DELETE, TRUNCATE, TRIGGER, DDL, table ownership or tenant-role
+inheritance. The dispatcher needs only the fields required to claim leases and record classified
+outcomes. Audit remains append-only and invitation lifecycle UPDATE remains restricted as documented
+in Step 16. Verify inherited grants, default privileges and BYPASSRLS rather than relying on direct
+grants alone.
+
+Only in the independently marked disposable `gym_test` database, after the reviewed migration is
+deployed, its existing restricted test role needs:
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE
+ON TABLE public.organization_owner_invitation_deliveries
+TO gym_test;
+
+GRANT USAGE
+ON TYPE public.organization_owner_invitation_delivery_status
+TO gym_test;
+```
+
+If the verified test role has a different name, substitute only that inspected role. Never copy the
+test DELETE grant into development runtime or production. Existing Step 15/16 test grants remain
+required because the focused suite creates explicitly tracked organizations, staff, invitations and
+audits, then deletes children before parents by reserved UUID only.
+
+After SQL approval, target verification, migration deployment and those test-only grants, the human
+runs:
+
+```bash
+npm run migration:test:deploy
+npm run prisma:generate
+npm run format:check
+npm run lint
+npm run typecheck
+npm run test:unit
+npm run test:integration
+npm run build
+```
+
+The integration suite verifies the disposable marker and live prerequisites before writes. It covers
+tenant-scoped relations, duplicate reservations, concurrent claims, expired-lease recovery, atomic
+provider finalization, revocation races, retry/uncertain outcomes, audit rollback, encrypted-material
+cleanup, PUBLIC revocation and scoped fixture cleanup. Authored tests do not prove deployment.
+
+### API and release blockers
+
+No Step 18 API functionality is activated at this checkpoint. `gym-api` work starts only after the
+human approves the generated migration, deploys it to the verified disposable target, regenerates the
+client, verifies this package and makes the compatible package available. Live delivery must remain
+disabled until a separate owner-facing acceptance page is implemented and reviewed, an approved fixed
+HTTPS acceptance origin and sender domain exist, cryptographic keys are provisioned, provider sandbox
+tests pass, and production runtime privileges are approved.
+
+The later preview endpoint may reveal only generic validity and the minimum reviewed gym display
+information. It must issue no cookie/session, modify no User, create no membership, grant no OWNER role
+and reveal no account-existence signal. Future acceptance must independently authenticate and verify
+the recipient's mailbox, bind the correct global User, establish membership/OWNER authorization and
+consume the invitation in one audited transaction. That acceptance transaction is not Step 18 Phase A.
+
 ## Engineering rules
 
 All contributors and agents must read `AGENTS.md` and `.agents/README.md`. These rules prohibit agents
