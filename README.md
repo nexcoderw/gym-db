@@ -1052,6 +1052,28 @@ TO gym_test;
 GRANT USAGE ON TYPE public.organization_membership_status TO gym_test;
 ```
 
+To prevent the same omission for later test-only tables, configure default privileges once in
+`gym_test` as the role that owns migration-created objects. First confirm that `current_user` is
+`gym_migrator`; never run this against `gym_dev` or production. These defaults affect only objects
+created later by `gym_migrator` in this database and do not repair existing tables:
+
+```sql
+SELECT current_database(), current_user;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE gym_migrator IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO gym_test;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE gym_migrator IN SCHEMA public
+  GRANT USAGE ON TYPES TO gym_test;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE gym_migrator IN SCHEMA public
+  GRANT EXECUTE ON FUNCTIONS TO gym_test;
+```
+
+The integration safety layer still verifies effective privileges for each new fixture table before
+authorizing writes. Default privileges are preventive, not a substitute for migration review,
+PUBLIC revocation, the database marker or the non-administrative test-role checks.
+
 The existing restricted test role must retain its previously reviewed User and Organization fixture
 grants. These DELETE privileges exist only for tracked fixture cleanup in `gym_test`; never copy them
 to production runtime roles. Integration setup verifies the database marker, table/check/composite-FK
@@ -1306,6 +1328,11 @@ GRANT EXECUTE ON FUNCTION
   public.stamp_organization_ownership_audit_event()
 TO gym_test;
 ```
+
+If the Step 15 grants were skipped earlier, apply both the Step 15 and Step 16 blocks in the same
+reviewed `gym_test` maintenance session. The direct grants repair existing tables; the default
+privileges documented in Step 15 protect future migration-owned test tables. A `42501 permission
+denied` error means the direct grants are still missing or were applied in a different database.
 
 DELETE exists only so tests can remove their explicitly tracked invitation/audit UUIDs. Never copy it
 to a runtime or production audit role. Integration setup verifies the independent database marker,
