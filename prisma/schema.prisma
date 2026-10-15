@@ -71,7 +71,7 @@ enum OrganizationOwnershipAuditAction {
 }
 
 enum OrganizationOwnerEnrollmentPurpose {
-  NEW_USER_ENROLLMENT           @map("new_user_enrollment")
+  NEW_USER_ENROLLMENT          @map("new_user_enrollment")
   EXISTING_USER_AUTHENTICATION @map("existing_user_authentication")
 
   @@map("organization_owner_enrollment_purpose")
@@ -119,22 +119,22 @@ enum PlatformAuthorizationAuditOutcome {
 /// Slug grammar, reserved names and nonblank names require reviewed SQL CHECK constraints.
 /// Lifecycle timestamps record the latest corresponding transition; status remains authoritative.
 model Organization {
-  id                        String                                @id(map: "organizations_pkey") @default(uuid()) @db.Uuid
-  name                      String                                @db.VarChar(160)
-  slug                      String                                @unique(map: "organizations_slug_key") @db.VarChar(63)
-  status                    OrganizationStatus                    @default(PENDING)
-  activatedAt               DateTime?                             @map("activated_at") @db.Timestamptz(6)
-  suspendedAt               DateTime?                             @map("suspended_at") @db.Timestamptz(6)
-  archivedAt                DateTime?                             @map("archived_at") @db.Timestamptz(6)
-  createdAt                 DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                 DateTime                              @updatedAt @map("updated_at") @db.Timestamptz(6)
-  auditEvents               OrganizationAuditEvent[]
-  memberships               OrganizationMembership[]
-  roles                     OrganizationRole[]
-  ownerInvitations          OrganizationOwnerInvitation[]
-  ownerInvitationDeliveries OrganizationOwnerInvitationDelivery[]
-  ownershipAuditEvents      OrganizationOwnershipAuditEvent[]
-  ownerEnrollmentChallenges OrganizationOwnerEnrollmentChallenge[]
+  id                         String                                  @id(map: "organizations_pkey") @default(uuid()) @db.Uuid
+  name                       String                                  @db.VarChar(160)
+  slug                       String                                  @unique(map: "organizations_slug_key") @db.VarChar(63)
+  status                     OrganizationStatus                      @default(PENDING)
+  activatedAt                DateTime?                               @map("activated_at") @db.Timestamptz(6)
+  suspendedAt                DateTime?                               @map("suspended_at") @db.Timestamptz(6)
+  archivedAt                 DateTime?                               @map("archived_at") @db.Timestamptz(6)
+  createdAt                  DateTime                                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime                                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  auditEvents                OrganizationAuditEvent[]
+  memberships                OrganizationMembership[]
+  roles                      OrganizationRole[]
+  ownerInvitations           OrganizationOwnerInvitation[]
+  ownerInvitationDeliveries  OrganizationOwnerInvitationDelivery[]
+  ownershipAuditEvents       OrganizationOwnershipAuditEvent[]
+  ownerEnrollmentChallenges  OrganizationOwnerEnrollmentChallenge[]
   ownerAcceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
 
   @@index([status, createdAt(sort: Desc), id], map: "organizations_status_created_at_id_idx")
@@ -144,17 +144,17 @@ model Organization {
 /// Global login identity. An account has no platform privileges without an active PlatformStaff
 /// record and permissions obtained through explicit role assignments.
 model User {
-  id                      String                   @id @default(uuid()) @db.Uuid
-  email                   String                   @unique(map: "users_email_key") @db.Citext
-  displayName             String                   @map("display_name") @db.VarChar(160)
-  status                  UserStatus               @default(PENDING)
-  emailVerifiedAt         DateTime?                @map("email_verified_at") @db.Timestamptz(6)
-  createdAt               DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt               DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(6)
-  passwordCredential      PasswordCredential?
-  platformStaff           PlatformStaff?
-  organizationMemberships OrganizationMembership[]
-  ownerEnrollmentChallenges OrganizationOwnerEnrollmentChallenge[]
+  id                         String                                  @id @default(uuid()) @db.Uuid
+  email                      String                                  @unique(map: "users_email_key") @db.Citext
+  displayName                String                                  @map("display_name") @db.VarChar(160)
+  status                     UserStatus                              @default(PENDING)
+  emailVerifiedAt            DateTime?                               @map("email_verified_at") @db.Timestamptz(6)
+  createdAt                  DateTime                                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime                                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  passwordCredential         PasswordCredential?
+  platformStaff              PlatformStaff?
+  organizationMemberships    OrganizationMembership[]
+  ownerEnrollmentChallenges  OrganizationOwnerEnrollmentChallenge[]
   ownerAcceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
 
   @@index([status], map: "users_status_idx")
@@ -165,18 +165,18 @@ model User {
 /// lifecycle timestamps are metadata and do not independently grant access. A revoked identity
 /// remains unique so rejoining requires an explicitly reviewed workflow.
 model OrganizationMembership {
-  id             String                       @id(map: "organization_memberships_pkey") @default(uuid()) @db.Uuid
-  organizationId String                       @map("organization_id") @db.Uuid
-  userId         String                       @map("user_id") @db.Uuid
-  status         OrganizationMembershipStatus @default(PENDING)
-  createdAt      DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  activatedAt    DateTime?                    @map("activated_at") @db.Timestamptz(6)
-  suspendedAt    DateTime?                    @map("suspended_at") @db.Timestamptz(6)
-  revokedAt      DateTime?                    @map("revoked_at") @db.Timestamptz(6)
-  organization   Organization                 @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_memberships_organization_fkey")
-  user           User                         @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_memberships_user_fkey")
-  roles          OrganizationMembershipRole[]
+  id                         String                                  @id(map: "organization_memberships_pkey") @default(uuid()) @db.Uuid
+  organizationId             String                                  @map("organization_id") @db.Uuid
+  userId                     String                                  @map("user_id") @db.Uuid
+  status                     OrganizationMembershipStatus            @default(PENDING)
+  createdAt                  DateTime                                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime                                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  activatedAt                DateTime?                               @map("activated_at") @db.Timestamptz(6)
+  suspendedAt                DateTime?                               @map("suspended_at") @db.Timestamptz(6)
+  revokedAt                  DateTime?                               @map("revoked_at") @db.Timestamptz(6)
+  organization               Organization                            @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_memberships_organization_fkey")
+  user                       User                                    @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_memberships_user_fkey")
+  roles                      OrganizationMembershipRole[]
   ownerAcceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
 
   @@unique([organizationId, userId], map: "organization_memberships_organization_user_key")
@@ -228,21 +228,21 @@ model OrganizationMembershipRole {
 /// tenant role, verified identity, credentials, session or platform permission. Email is retained
 /// independently until a future verified acceptance workflow securely binds it to a User.
 model OrganizationOwnerInvitation {
-  id                       String                               @id(map: "organization_owner_invitations_pkey") @default(uuid()) @db.Uuid
-  organizationId           String                               @map("organization_id") @db.Uuid
-  invitedEmail             String                               @map("invited_email") @db.Citext
-  invitedDisplayName       String                               @map("invited_display_name") @db.VarChar(160)
-  invitedByPlatformStaffId String                               @map("invited_by_platform_staff_id") @db.Uuid
-  status                   OrganizationOwnerInvitationStatus    @default(PENDING_DELIVERY)
-  tokenDigest              String?                              @unique(map: "organization_owner_invitations_token_digest_key") @map("token_digest") @db.VarChar(128)
-  expiresAt                DateTime?                            @map("expires_at") @db.Timestamptz(6)
-  sentAt                   DateTime?                            @map("sent_at") @db.Timestamptz(6)
-  acceptedAt               DateTime?                            @map("accepted_at") @db.Timestamptz(6)
-  revokedAt                DateTime?                            @map("revoked_at") @db.Timestamptz(6)
-  createdAt                DateTime                             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                DateTime                             @updatedAt @map("updated_at") @db.Timestamptz(6)
-  organization             Organization                         @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitations_organization_fkey")
-  invitedByPlatformStaff   PlatformStaff                        @relation(fields: [invitedByPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitations_actor_fkey")
+  id                       String                                 @id(map: "organization_owner_invitations_pkey") @default(uuid()) @db.Uuid
+  organizationId           String                                 @map("organization_id") @db.Uuid
+  invitedEmail             String                                 @map("invited_email") @db.Citext
+  invitedDisplayName       String                                 @map("invited_display_name") @db.VarChar(160)
+  invitedByPlatformStaffId String                                 @map("invited_by_platform_staff_id") @db.Uuid
+  status                   OrganizationOwnerInvitationStatus      @default(PENDING_DELIVERY)
+  tokenDigest              String?                                @unique(map: "organization_owner_invitations_token_digest_key") @map("token_digest") @db.VarChar(128)
+  expiresAt                DateTime?                              @map("expires_at") @db.Timestamptz(6)
+  sentAt                   DateTime?                              @map("sent_at") @db.Timestamptz(6)
+  acceptedAt               DateTime?                              @map("accepted_at") @db.Timestamptz(6)
+  revokedAt                DateTime?                              @map("revoked_at") @db.Timestamptz(6)
+  createdAt                DateTime                               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime                               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization             Organization                           @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitations_organization_fkey")
+  invitedByPlatformStaff   PlatformStaff                          @relation(fields: [invitedByPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitations_actor_fkey")
   auditEvents              OrganizationOwnershipAuditEvent[]
   delivery                 OrganizationOwnerInvitationDelivery?
   enrollmentChallenges     OrganizationOwnerEnrollmentChallenge[]
@@ -259,27 +259,27 @@ model OrganizationOwnerInvitation {
 /// neither invitation possession nor a persisted status alone authenticates a recipient.
 /// Reviewed SQL must enforce proof lifecycle, monotonic attempts, expiry and single consumption.
 model OrganizationOwnerEnrollmentChallenge {
-  id                   String                            @id(map: "owner_enrollment_challenges_pkey") @default(uuid()) @db.Uuid
-  organizationId       String                            @map("organization_id") @db.Uuid
-  ownerInvitationId    String                            @map("owner_invitation_id") @db.Uuid
-  userId               String?                           @map("user_id") @db.Uuid
-  purpose              OrganizationOwnerEnrollmentPurpose
-  status               OrganizationOwnerEnrollmentStatus @default(PENDING)
-  tokenDigest          String?                           @unique(map: "owner_enrollment_challenges_token_digest_key") @map("token_digest") @db.VarChar(128)
-  failedAttempts       Int                               @default(0) @map("failed_attempts")
-  maxAttempts          Int                               @default(5) @map("max_attempts")
-  createdAt            DateTime                          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime                          @updatedAt @map("updated_at") @db.Timestamptz(6)
-  expiresAt            DateTime                          @map("expires_at") @db.Timestamptz(6)
-  mailboxVerifiedAt    DateTime?                         @map("mailbox_verified_at") @db.Timestamptz(6)
-  authenticatedAt      DateTime?                         @map("authenticated_at") @db.Timestamptz(6)
-  stepUpVerifiedAt     DateTime?                         @map("step_up_verified_at") @db.Timestamptz(6)
-  verifiedAt           DateTime?                         @map("verified_at") @db.Timestamptz(6)
-  consumedAt           DateTime?                         @map("consumed_at") @db.Timestamptz(6)
-  revokedAt            DateTime?                         @map("revoked_at") @db.Timestamptz(6)
-  organization         Organization                      @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "owner_enrollment_challenges_organization_fkey")
-  ownerInvitation      OrganizationOwnerInvitation        @relation(fields: [organizationId, ownerInvitationId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "owner_enrollment_challenges_invitation_fkey")
-  user                 User?                             @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "owner_enrollment_challenges_user_fkey")
+  id                    String                                  @id(map: "owner_enrollment_challenges_pkey") @default(uuid()) @db.Uuid
+  organizationId        String                                  @map("organization_id") @db.Uuid
+  ownerInvitationId     String                                  @map("owner_invitation_id") @db.Uuid
+  userId                String?                                 @map("user_id") @db.Uuid
+  purpose               OrganizationOwnerEnrollmentPurpose
+  status                OrganizationOwnerEnrollmentStatus       @default(PENDING)
+  tokenDigest           String?                                 @unique(map: "owner_enrollment_challenges_token_digest_key") @map("token_digest") @db.VarChar(128)
+  failedAttempts        Int                                     @default(0) @map("failed_attempts")
+  maxAttempts           Int                                     @default(5) @map("max_attempts")
+  createdAt             DateTime                                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime                                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  expiresAt             DateTime                                @map("expires_at") @db.Timestamptz(6)
+  mailboxVerifiedAt     DateTime?                               @map("mailbox_verified_at") @db.Timestamptz(6)
+  authenticatedAt       DateTime?                               @map("authenticated_at") @db.Timestamptz(6)
+  stepUpVerifiedAt      DateTime?                               @map("step_up_verified_at") @db.Timestamptz(6)
+  verifiedAt            DateTime?                               @map("verified_at") @db.Timestamptz(6)
+  consumedAt            DateTime?                               @map("consumed_at") @db.Timestamptz(6)
+  revokedAt             DateTime?                               @map("revoked_at") @db.Timestamptz(6)
+  organization          Organization                            @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "owner_enrollment_challenges_organization_fkey")
+  ownerInvitation       OrganizationOwnerInvitation             @relation(fields: [organizationId, ownerInvitationId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "owner_enrollment_challenges_invitation_fkey")
+  user                  User?                                   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "owner_enrollment_challenges_user_fkey")
   acceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
 
   @@unique([organizationId, id, ownerInvitationId, userId], map: "owner_enrollment_challenges_proof_identity_key")
@@ -304,10 +304,10 @@ model OrganizationOwnerAcceptanceAuditEvent {
   occurredAt               DateTime                               @map("occurred_at") @db.Timestamptz(6)
   recordedAt               DateTime                               @default(now()) @map("recorded_at") @db.Timestamptz(6)
   organization             Organization                           @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_organization_fkey")
-  ownerInvitation          OrganizationOwnerInvitation             @relation(fields: [organizationId, ownerInvitationId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_invitation_fkey")
+  ownerInvitation          OrganizationOwnerInvitation            @relation(fields: [organizationId, ownerInvitationId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_invitation_fkey")
   actorUser                User                                   @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_user_fkey")
   organizationMembership   OrganizationMembership                 @relation(fields: [organizationId, organizationMembershipId, actorUserId], references: [organizationId, id, userId], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_membership_fkey")
-  enrollmentChallenge      OrganizationOwnerEnrollmentChallenge    @relation(fields: [organizationId, enrollmentChallengeId, ownerInvitationId, actorUserId], references: [organizationId, id, ownerInvitationId, userId], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_challenge_fkey")
+  enrollmentChallenge      OrganizationOwnerEnrollmentChallenge   @relation(fields: [organizationId, enrollmentChallengeId, ownerInvitationId, actorUserId], references: [organizationId, id, ownerInvitationId, userId], onDelete: Restrict, onUpdate: Restrict, map: "owner_acceptance_audit_events_challenge_fkey")
 
   @@unique([organizationId, ownerInvitationId], map: "owner_acceptance_audit_events_org_invitation_key")
   @@index([organizationId, actorUserId, recordedAt(sort: Desc), id], map: "owner_acceptance_audit_events_org_actor_time_idx")
