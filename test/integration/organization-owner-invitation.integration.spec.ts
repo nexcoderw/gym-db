@@ -251,7 +251,9 @@ describe('organization owner invitation and ownership audit foundation', () => {
 
 	it('enforces normalized bounded recipient data and immutable invitation identity', async () => {
 		const organizationId = await createOrganization();
+		const otherOrganizationId = await createOrganization('Power Gym');
 		const actorId = await createActor();
+		const otherActorId = await createActor();
 		for (const change of [
 			{ invitedEmail: 'Owner@example.com' },
 			{ invitedEmail: ' owner@example.com' },
@@ -274,6 +276,39 @@ describe('organization owner invitation and ownership audit foundation', () => {
 				data: { invitedEmail: 'different@example.com' },
 			}),
 		).rejects.toThrow('organization owner invitation identity is immutable');
+		await expect(
+			prisma.organizationOwnerInvitation.update({
+				where: { id: data.id },
+				data: { organizationId: otherOrganizationId },
+			}),
+		).rejects.toThrow('organization owner invitation identity is immutable');
+		await expect(
+			prisma.organizationOwnerInvitation.update({
+				where: { id: data.id },
+				data: { invitedByPlatformStaffId: otherActorId },
+			}),
+		).rejects.toThrow('organization owner invitation identity is immutable');
+	});
+
+	it('uses citext plus enforced lowercase normalization for recipient identity', async () => {
+		const columns = await prisma.$queryRaw<{ type: string }[]>`
+			SELECT atttypid::regtype::text AS type
+			FROM pg_catalog.pg_attribute
+			WHERE attrelid = 'public.organization_owner_invitations'::regclass
+				AND attname = 'invited_email' AND NOT attisdropped
+		`;
+		expect(columns).toEqual([{ type: 'citext' }]);
+
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		await prisma.organizationOwnerInvitation.create({
+			data: invitationData(organizationId, actorId, 'owner@example.com'),
+		});
+		await expect(
+			prisma.organizationOwnerInvitation.create({
+				data: invitationData(organizationId, actorId, 'OWNER@example.com'),
+			}),
+		).rejects.toThrow('organization_owner_invitations_email_check');
 	});
 
 	it('prevents concurrent outstanding duplicates per organization and email', async () => {
@@ -343,6 +378,46 @@ describe('organization owner invitation and ownership audit foundation', () => {
 				},
 			}),
 		).rejects.toThrow('organization_owner_invitations_timestamp_order_check');
+
+		await expect(
+			prisma.organizationOwnerInvitation.create({
+				data: {
+					...invitationData(organizationId, actorId, 'accepted@example.com'),
+					status: OrganizationOwnerInvitationStatus.ACCEPTED,
+					sentAt,
+					expiresAt,
+					acceptedAt: new Date('2030-01-01T12:00:00.000Z'),
+				},
+			}),
+		).resolves.toMatchObject({ status: OrganizationOwnerInvitationStatus.ACCEPTED });
+		await expect(
+			prisma.organizationOwnerInvitation.create({
+				data: {
+					...invitationData(organizationId, actorId, 'revoked@example.com'),
+					status: OrganizationOwnerInvitationStatus.REVOKED,
+					revokedAt: new Date('2030-01-01T01:00:00.000Z'),
+				},
+			}),
+		).resolves.toMatchObject({ status: OrganizationOwnerInvitationStatus.REVOKED });
+	});
+
+	it('overrides caller-supplied audit persistence time with the database clock', async () => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitation = invitationData(organizationId, actorId);
+		await prisma.organizationOwnerInvitation.create({ data: invitation });
+		const supplied = new Date('2000-01-01T00:00:00.000Z');
+		const beforeInsert = new Date();
+		const audit = await prisma.organizationOwnershipAuditEvent.create({
+			data: {
+				...auditData(organizationId, invitation.id, actorId),
+				recordedAt: supplied,
+			},
+		});
+
+		expect(audit.recordedAt).not.toEqual(supplied);
+		expect(audit.recordedAt.getTime()).toBeGreaterThanOrEqual(beforeInsert.getTime());
+		expect(audit.recordedAt.getTime()).toBeLessThanOrEqual(Date.now());
 	});
 
 	it('revokes an invitation and appends its audit atomically', async () => {
