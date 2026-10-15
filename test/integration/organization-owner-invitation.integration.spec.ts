@@ -19,6 +19,7 @@ import { PlatformAdminTestFixtures } from './platform-admin-test-fixtures.js';
 import {
 	loadTestDatabaseSafetyConfig,
 	verifyTestDatabaseSafety,
+	verifyTestTablePrivileges,
 	type VerifiedTestDatabase,
 } from './test-database-safety.js';
 
@@ -98,6 +99,16 @@ describe('organization owner invitation and ownership audit foundation', () => {
 				'migrations, reviewed constraints, indexes and triggers before integration tests.',
 			);
 		}
+		await verifyTestTablePrivileges(prisma, [
+			{
+				tableName: 'organization_owner_invitations',
+				privileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+			},
+			{
+				tableName: 'organization_ownership_audit_events',
+				privileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+			},
+		]);
 		verified = safe;
 	});
 
