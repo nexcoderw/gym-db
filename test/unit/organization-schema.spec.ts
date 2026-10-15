@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 describe('organization schema contract', () => {
-	it('defines a minimal independent root without identity or future-domain relationships', async () => {
+	it('defines an independent tenant root without carrying membership identity keys', async () => {
 		const schema = await readFile(new URL('../../prisma/schema.prisma', import.meta.url), 'utf8');
 		const model = /model Organization \{[\s\S]*?\n\}/u.exec(schema)?.[0];
 		expect(model).toBeDefined();
@@ -15,6 +15,8 @@ describe('organization schema contract', () => {
 		expect(model).toMatch(/status\s+OrganizationStatus\s+@default\(PENDING\)/u);
 		expect(model).toContain('@@map("organizations")');
 		expect(model).toContain('@@index([status, createdAt(sort: Desc), id]');
+		expect(model).toMatch(/memberships\s+OrganizationMembership\[\]/u);
+		expect(model).toMatch(/roles\s+OrganizationRole\[\]/u);
 		expect(model).not.toMatch(/organizationId|userId|platformStaffId|subscription|Json|@relation/u);
 		expect(model).not.toMatch(/name[^\n]*@unique/u);
 	});
