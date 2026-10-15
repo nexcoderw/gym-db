@@ -334,6 +334,14 @@ ALTER TABLE public.organizations
 REVOKE ALL ON TABLE public.organizations FROM PUBLIC;
 ```
 
+If an environment recorded the earlier integrity migration before its constraint SQL was present,
+deploy `20261015091135_repair_organization_integrity_constraints` as the forward repair. It adds
+missing named checks, validates existing unvalidated checks and retains already validated checks.
+The repair runs transactionally with a 10-second lock timeout and 60-second statement timeout because
+adding or validating checks scans existing organization rows and requires a table lock. A timeout or
+invalid existing row rolls the entire repair back; correct the data or schedule a quiet deployment
+window and retry instead of editing migration history.
+
 The name check explicitly covers ASCII and Unicode whitespace (including NBSP/ideographic spaces)
 and BOM; it does not trim or prohibit Unicode display names. Require UTF-8 server encoding for this
 reviewed Unicode policy. The slug regex uses C collation for stable ASCII ranges. See PostgreSQL's
