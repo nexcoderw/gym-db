@@ -240,8 +240,8 @@ model OrganizationOwnerInvitationDelivery {
   leaseAcquiredAt            DateTime?                                 @map("lease_acquired_at") @db.Timestamptz(6)
   leaseExpiresAt             DateTime?                                 @map("lease_expires_at") @db.Timestamptz(6)
   claimedBy                  String?                                   @map("claimed_by") @db.VarChar(120)
-  providerIdempotencyKey     String                                    @unique(map: "organization_owner_invitation_deliveries_provider_idempotency_key") @map("provider_idempotency_key") @db.VarChar(128)
-  providerMessageId          String?                                   @unique(map: "organization_owner_invitation_deliveries_provider_message_id_key") @map("provider_message_id") @db.VarChar(128)
+  providerIdempotencyKey     String                                    @unique(map: "owner_invitation_deliveries_provider_idempotency_key") @map("provider_idempotency_key") @db.VarChar(128)
+  providerMessageId          String?                                   @unique(map: "owner_invitation_deliveries_provider_message_id_key") @map("provider_message_id") @db.VarChar(128)
   lastErrorCode              String?                                   @map("last_error_code") @db.VarChar(63)
   tokenDigest                String?                                   @unique(map: "organization_owner_invitation_deliveries_token_digest_key") @map("token_digest") @db.VarChar(128)
   tokenCiphertext            Bytes?                                    @map("token_ciphertext")
@@ -261,9 +261,9 @@ model OrganizationOwnerInvitationDelivery {
   requestedByPlatformStaff   PlatformStaff                             @relation(fields: [requestedByPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitation_deliveries_actor_fkey")
 
   @@unique([organizationId, id], map: "organization_owner_invitation_deliveries_organization_id_key")
-  @@unique([organizationId, ownerInvitationId], map: "organization_owner_invitation_deliveries_organization_invitation_key")
+  @@unique([organizationId, ownerInvitationId], map: "owner_invitation_deliveries_org_invitation_key")
   @@index([organizationId, status, nextAttemptAt, id], map: "organization_owner_invitation_deliveries_org_status_next_id_idx")
-  @@index([organizationId, requestedByPlatformStaffId, createdAt(sort: Desc), id], map: "organization_owner_invitation_deliveries_org_actor_created_id_idx")
+  @@index([organizationId, requestedByPlatformStaffId, createdAt(sort: Desc), id], map: "owner_invitation_deliveries_org_actor_created_id_idx")
   @@index([status, nextAttemptAt, leaseExpiresAt, id], map: "organization_owner_invitation_deliveries_worker_claim_idx")
   @@map("organization_owner_invitation_deliveries")
 }
