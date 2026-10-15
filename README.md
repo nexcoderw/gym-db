@@ -1282,32 +1282,76 @@ requires the canonical lowercase, trimmed representation. The identity trigger b
 organization, recipient-email or initiating-actor rewrites. The lifecycle checks reserve future SENT
 and ACCEPTED states but do not implement them.
 
-If the generated base invitation migration was applied anywhere before this custom SQL was reviewed,
-do not edit that applied file or resolve its checksum. Apply the unchanged base migration to the
-approved development database, then generate a forward-only migration from the canonical schema:
+The base invitation migration was applied to the approved development database before this custom
+SQL was added. Its checksum remains unchanged. The generated forward-only repair is
+`20261015105926_harden_organization_owner_invitations`; it contains the schema-derived
+organization/action/time index and the complete reviewed hardening SQL above. Do not move these
+statements into the applied base migration or resolve its checksum.
+
+For another environment that already contains the base migration, deploy the committed forward
+migration in normal order. If an equivalent recovery must ever be regenerated from the canonical
+schema before this repair is committed, use:
 
 ```bash
 npm run migration:deploy
 npm run migration:create -- --name harden_organization_owner_invitations
 ```
 
-The generated forward migration must contain the organization/action/time investigation index. Stop
-before applying it, append the complete reviewed hardening SQL above, and inspect the resulting SQL as
-one unit. Deploy that forward migration to every database that received the incomplete base migration.
-This recovery preserves immutable migration history and gives every environment the same final
-constraints, partial uniqueness, triggers and PUBLIC revocations.
+The forward migration must contain the organization/action/time investigation index and the complete
+reviewed hardening SQL. Stop before applying it and inspect the resulting SQL as one unit. Deploy that
+forward migration to every database that received the incomplete base migration. This recovery
+preserves immutable migration history and gives every environment the same final constraints,
+partial uniqueness, triggers and PUBLIC revocations.
 
 ### Runtime privileges, RLS limitation and disposable tests
 
 Owner invitations contain personal information and access-control intent. Grant no access to normal
-gym tenant roles. The NEXCODE platform runtime role requires a separately reviewed control-plane
-grant equivalent to SELECT/INSERT/UPDATE on `organization_owner_invitations`, SELECT/INSERT only on
-`organization_ownership_audit_events`, USAGE on the two enum types and trigger-function execution.
-It must receive no DELETE, UPDATE or TRUNCATE on the audit table. Prefer column-specific invitation
-UPDATE privileges for status/token/timestamp fields. Verify actual ownership, inherited roles,
-BYPASSRLS and default privileges before production; table grants make routine audit access
-append-only but cannot make infrastructure immutable from a database owner. No permissive RLS policy
-is introduced, and `TenantTransactionService` alone is not platform authorization.
+gym tenant roles. After the migration is approved and deployed, an authorized database owner applies
+the following separately reviewed control-plane grants to the platform runtime role in each intended
+database. Revoke first to clear historical grants made directly to `gym_app`; inherited privileges
+must be inspected separately because revoking from this role does not revoke access inherited through
+another role:
+
+```sql
+REVOKE ALL ON TABLE
+  public.organization_owner_invitations,
+  public.organization_ownership_audit_events
+FROM gym_app;
+
+GRANT SELECT, INSERT
+ON TABLE public.organization_owner_invitations
+TO gym_app;
+
+GRANT UPDATE (
+  status,
+  token_digest,
+  expires_at,
+  sent_at,
+  accepted_at,
+  revoked_at,
+  updated_at
+)
+ON TABLE public.organization_owner_invitations
+TO gym_app;
+
+GRANT SELECT, INSERT
+ON TABLE public.organization_ownership_audit_events
+TO gym_app;
+
+GRANT USAGE ON TYPE
+  public.organization_owner_invitation_status,
+  public.organization_ownership_audit_action
+TO gym_app;
+```
+
+Do not grant direct function execution: PostgreSQL invokes the already-installed trigger functions
+through their triggers, while direct calls remain unavailable after PUBLIC revocation. Verify actual
+ownership, inherited roles, BYPASSRLS and default privileges before production. In particular,
+confirm that `gym_app` has no table-level UPDATE, DELETE, TRUNCATE or TRIGGER privilege on either
+table and has UPDATE only on the seven invitation lifecycle columns above. These grants make routine
+audit access append-only but cannot make infrastructure immutable from a database owner or superuser.
+No permissive RLS policy is introduced, and `TenantTransactionService` alone is not platform
+authorization.
 
 After Gate B review and explicit approval, deploy both gates to the independently marked disposable
 test database. Its authorized owner may apply only these test-fixture privileges:
