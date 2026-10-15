@@ -79,8 +79,7 @@ describe('organization owner invitation delivery foundation', () => {
 			table === undefined ||
 			requiredChecks.some((name) => !checks.some((check) => check.name === name)) ||
 			!indexes.some(
-				({ name }) =>
-					name === 'organization_owner_invitation_deliveries_organization_invitation_key',
+				({ name }) => name === 'owner_invitation_deliveries_org_invitation_key',
 			) ||
 			!indexes.some(
 				({ name }) => name === 'organization_owner_invitation_deliveries_worker_claim_idx',
