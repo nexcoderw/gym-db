@@ -16,6 +16,7 @@ import { PlatformAdminTestFixtures } from './platform-admin-test-fixtures.js';
 import {
 	loadTestDatabaseSafetyConfig,
 	verifyTestDatabaseSafety,
+	verifyTestTablePrivileges,
 	type VerifiedTestDatabase,
 } from './test-database-safety.js';
 
@@ -78,6 +79,20 @@ describe('organization ownership and membership foundation', () => {
 					'migration, SQL checks and composite foreign keys to the verified test database.',
 			);
 		}
+		await verifyTestTablePrivileges(prisma, [
+			{
+				tableName: 'organization_memberships',
+				privileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+			},
+			{
+				tableName: 'organization_roles',
+				privileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+			},
+			{
+				tableName: 'organization_membership_roles',
+				privileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+			},
+		]);
 		verified = safe;
 	});
 
