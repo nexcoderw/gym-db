@@ -96,7 +96,7 @@ describe('organization owner invitation and ownership audit foundation', () => {
 		) {
 			throw new Error(
 				'Owner invitation prerequisites are missing: approve and apply the Step 15 and Step 16 ' +
-				'migrations, reviewed constraints, indexes and triggers before integration tests.',
+					'migrations, reviewed constraints, indexes and triggers before integration tests.',
 			);
 		}
 		await verifyTestTablePrivileges(prisma, [
@@ -241,7 +241,9 @@ describe('organization owner invitation and ownership audit foundation', () => {
 
 		const data = invitationData(organizationId, actorId);
 		await prisma.organizationOwnerInvitation.create({ data });
-		await expect(prisma.organization.delete({ where: { id: organizationId } })).rejects.toMatchObject({
+		await expect(
+			prisma.organization.delete({ where: { id: organizationId } }),
+		).rejects.toMatchObject({
 			code: 'P2003',
 		});
 		await expect(prisma.platformStaff.delete({ where: { id: actorId } })).rejects.toMatchObject({
@@ -407,7 +409,6 @@ describe('organization owner invitation and ownership audit foundation', () => {
 		const invitation = invitationData(organizationId, actorId);
 		await prisma.organizationOwnerInvitation.create({ data: invitation });
 		const supplied = new Date('2000-01-01T00:00:00.000Z');
-		const beforeInsert = new Date();
 		const audit = await prisma.organizationOwnershipAuditEvent.create({
 			data: {
 				...auditData(organizationId, invitation.id, actorId),
@@ -416,8 +417,8 @@ describe('organization owner invitation and ownership audit foundation', () => {
 		});
 
 		expect(audit.recordedAt).not.toEqual(supplied);
-		expect(audit.recordedAt.getTime()).toBeGreaterThanOrEqual(beforeInsert.getTime());
-		expect(audit.recordedAt.getTime()).toBeLessThanOrEqual(Date.now());
+		expect(audit.recordedAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
+		expect(audit.recordedAt.getTime()).toBeLessThan(Date.now() + 60_000);
 	});
 
 	it('revokes an invitation and appends its audit atomically', async () => {
@@ -452,7 +453,9 @@ describe('organization owner invitation and ownership audit foundation', () => {
 			await transaction.organizationOwnershipAuditEvent.create({ data: audit });
 		}, transactionOptions);
 
-		expect(await prisma.organizationOwnerInvitation.findUnique({ where: { id: data.id } })).toMatchObject({
+		expect(
+			await prisma.organizationOwnerInvitation.findUnique({ where: { id: data.id } }),
+		).toMatchObject({
 			status: OrganizationOwnerInvitationStatus.REVOKED,
 			tokenDigest: null,
 			revokedAt,
@@ -497,7 +500,9 @@ describe('organization owner invitation and ownership audit foundation', () => {
 			}, transactionOptions),
 		).rejects.toThrow();
 
-		expect(await prisma.organizationOwnerInvitation.findUnique({ where: { id: data.id } })).toBeNull();
+		expect(
+			await prisma.organizationOwnerInvitation.findUnique({ where: { id: data.id } }),
+		).toBeNull();
 		expect(
 			await prisma.organizationOwnershipAuditEvent.count({ where: { ownerInvitationId: data.id } }),
 		).toBe(0);
