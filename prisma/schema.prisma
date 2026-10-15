@@ -97,21 +97,21 @@ enum PlatformAuthorizationAuditOutcome {
 /// Slug grammar, reserved names and nonblank names require reviewed SQL CHECK constraints.
 /// Lifecycle timestamps record the latest corresponding transition; status remains authoritative.
 model Organization {
-  id                   String                            @id(map: "organizations_pkey") @default(uuid()) @db.Uuid
-  name                 String                            @db.VarChar(160)
-  slug                 String                            @unique(map: "organizations_slug_key") @db.VarChar(63)
-  status               OrganizationStatus                @default(PENDING)
-  activatedAt          DateTime?                         @map("activated_at") @db.Timestamptz(6)
-  suspendedAt          DateTime?                         @map("suspended_at") @db.Timestamptz(6)
-  archivedAt           DateTime?                         @map("archived_at") @db.Timestamptz(6)
-  createdAt            DateTime                          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime                          @updatedAt @map("updated_at") @db.Timestamptz(6)
-  auditEvents          OrganizationAuditEvent[]
-  memberships          OrganizationMembership[]
-  roles                OrganizationRole[]
-  ownerInvitations     OrganizationOwnerInvitation[]
+  id                        String                                @id(map: "organizations_pkey") @default(uuid()) @db.Uuid
+  name                      String                                @db.VarChar(160)
+  slug                      String                                @unique(map: "organizations_slug_key") @db.VarChar(63)
+  status                    OrganizationStatus                    @default(PENDING)
+  activatedAt               DateTime?                             @map("activated_at") @db.Timestamptz(6)
+  suspendedAt               DateTime?                             @map("suspended_at") @db.Timestamptz(6)
+  archivedAt                DateTime?                             @map("archived_at") @db.Timestamptz(6)
+  createdAt                 DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime                              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  auditEvents               OrganizationAuditEvent[]
+  memberships               OrganizationMembership[]
+  roles                     OrganizationRole[]
+  ownerInvitations          OrganizationOwnerInvitation[]
   ownerInvitationDeliveries OrganizationOwnerInvitationDelivery[]
-  ownershipAuditEvents OrganizationOwnershipAuditEvent[]
+  ownershipAuditEvents      OrganizationOwnershipAuditEvent[]
 
   @@index([status, createdAt(sort: Desc), id], map: "organizations_status_created_at_id_idx")
   @@map("organizations")
@@ -200,21 +200,21 @@ model OrganizationMembershipRole {
 /// tenant role, verified identity, credentials, session or platform permission. Email is retained
 /// independently until a future verified acceptance workflow securely binds it to a User.
 model OrganizationOwnerInvitation {
-  id                       String                            @id(map: "organization_owner_invitations_pkey") @default(uuid()) @db.Uuid
-  organizationId           String                            @map("organization_id") @db.Uuid
-  invitedEmail             String                            @map("invited_email") @db.Citext
-  invitedDisplayName       String                            @map("invited_display_name") @db.VarChar(160)
-  invitedByPlatformStaffId String                            @map("invited_by_platform_staff_id") @db.Uuid
-  status                   OrganizationOwnerInvitationStatus @default(PENDING_DELIVERY)
-  tokenDigest              String?                           @unique(map: "organization_owner_invitations_token_digest_key") @map("token_digest") @db.VarChar(128)
-  expiresAt                DateTime?                         @map("expires_at") @db.Timestamptz(6)
-  sentAt                   DateTime?                         @map("sent_at") @db.Timestamptz(6)
-  acceptedAt               DateTime?                         @map("accepted_at") @db.Timestamptz(6)
-  revokedAt                DateTime?                         @map("revoked_at") @db.Timestamptz(6)
-  createdAt                DateTime                          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                DateTime                          @updatedAt @map("updated_at") @db.Timestamptz(6)
-  organization             Organization                      @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitations_organization_fkey")
-  invitedByPlatformStaff   PlatformStaff                     @relation(fields: [invitedByPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitations_actor_fkey")
+  id                       String                               @id(map: "organization_owner_invitations_pkey") @default(uuid()) @db.Uuid
+  organizationId           String                               @map("organization_id") @db.Uuid
+  invitedEmail             String                               @map("invited_email") @db.Citext
+  invitedDisplayName       String                               @map("invited_display_name") @db.VarChar(160)
+  invitedByPlatformStaffId String                               @map("invited_by_platform_staff_id") @db.Uuid
+  status                   OrganizationOwnerInvitationStatus    @default(PENDING_DELIVERY)
+  tokenDigest              String?                              @unique(map: "organization_owner_invitations_token_digest_key") @map("token_digest") @db.VarChar(128)
+  expiresAt                DateTime?                            @map("expires_at") @db.Timestamptz(6)
+  sentAt                   DateTime?                            @map("sent_at") @db.Timestamptz(6)
+  acceptedAt               DateTime?                            @map("accepted_at") @db.Timestamptz(6)
+  revokedAt                DateTime?                            @map("revoked_at") @db.Timestamptz(6)
+  createdAt                DateTime                             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime                             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization             Organization                         @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitations_organization_fkey")
+  invitedByPlatformStaff   PlatformStaff                        @relation(fields: [invitedByPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitations_actor_fkey")
   auditEvents              OrganizationOwnershipAuditEvent[]
   delivery                 OrganizationOwnerInvitationDelivery?
 
@@ -311,23 +311,23 @@ model PasswordCredential {
 /// Explicit eligibility for NEXCODE platform administration. Active status alone grants nothing;
 /// authorization also requires effective permissions assigned through PlatformRole.
 model PlatformStaff {
-  id                       String                            @id @default(uuid()) @db.Uuid
-  userId                   String                            @unique(map: "platform_staff_user_id_key") @map("user_id") @db.Uuid
-  status                   PlatformStaffStatus
-  suspendedAt              DateTime?                         @map("suspended_at") @db.Timestamptz(6)
-  createdAt                DateTime                          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                DateTime                          @updatedAt @map("updated_at") @db.Timestamptz(6)
-  user                     User                              @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  roles                    PlatformStaffRole[]
-  adminSessions            PlatformAdminSession[]
-  totpCredential           PlatformTotpCredential?
-  recoveryCodes            PlatformRecoveryCode[]
-  mfaChallenges            PlatformMfaChallenge[]
-  organizationAuditEvents  OrganizationAuditEvent[]
-  authorizationAuditEvents PlatformAuthorizationAuditEvent[]
-  ownerInvitationsCreated  OrganizationOwnerInvitation[]
+  id                                 String                                @id @default(uuid()) @db.Uuid
+  userId                             String                                @unique(map: "platform_staff_user_id_key") @map("user_id") @db.Uuid
+  status                             PlatformStaffStatus
+  suspendedAt                        DateTime?                             @map("suspended_at") @db.Timestamptz(6)
+  createdAt                          DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                          DateTime                              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user                               User                                  @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  roles                              PlatformStaffRole[]
+  adminSessions                      PlatformAdminSession[]
+  totpCredential                     PlatformTotpCredential?
+  recoveryCodes                      PlatformRecoveryCode[]
+  mfaChallenges                      PlatformMfaChallenge[]
+  organizationAuditEvents            OrganizationAuditEvent[]
+  authorizationAuditEvents           PlatformAuthorizationAuditEvent[]
+  ownerInvitationsCreated            OrganizationOwnerInvitation[]
   ownerInvitationDeliveriesRequested OrganizationOwnerInvitationDelivery[]
-  ownershipAuditEvents     OrganizationOwnershipAuditEvent[]
+  ownershipAuditEvents               OrganizationOwnershipAuditEvent[]
 
   @@index([status], map: "platform_staff_status_idx")
   @@map("platform_staff")
