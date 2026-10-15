@@ -1,6 +1,32 @@
 import { readFile } from 'node:fs/promises';
 
 describe('durable platform audit schema', () => {
+	it('repairs the complete audit contract without rewriting applied history', async () => {
+		const migration = await readFile(
+			new URL(
+				'../../prisma/migrations/20261015113000_repair_platform_audit_contract/migration.sql',
+				import.meta.url,
+			),
+			'utf8',
+		);
+
+		for (const contract of [
+			'platform_authorization_audit_events_approval_check',
+			'platform_authorization_audit_events_permissions_check',
+			'organization_audit_stamp',
+			'platform_authorization_audit_stamp',
+		]) {
+			expect(migration).toContain(contract);
+		}
+		expect(migration).toContain('CREATE OR REPLACE FUNCTION public.stamp_organization_audit()');
+		expect(migration).toContain(
+			'CREATE OR REPLACE FUNCTION public.stamp_platform_authorization_audit()',
+		);
+		expect(migration).toMatch(/REVOKE ALL ON FUNCTION[\s\S]+FROM PUBLIC;/u);
+		expect(migration).toMatch(/REVOKE ALL ON TABLE[\s\S]+FROM PUBLIC;/u);
+		expect(migration).not.toMatch(/DROP (TABLE|TYPE)|TRUNCATE/u);
+	});
+
 	it.each(['OrganizationAuditEvent', 'PlatformAuthorizationAuditEvent'])(
 		'keeps %s focused, bounded and restrictive',
 		async (name) => {
