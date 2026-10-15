@@ -353,4 +353,27 @@ describe('organization database foundation', () => {
 		`;
 		expect(identities).toEqual([{ users: 'users', staff: 'platform_staff' }]);
 	});
+
+	it('does not expose the organization registry through PUBLIC table or column grants', async () => {
+		const privileges = await prisma.$queryRaw<{ exposed: boolean }[]>`
+			SELECT EXISTS (
+				SELECT 1
+				FROM pg_catalog.pg_class AS relation
+				CROSS JOIN LATERAL aclexplode(
+					COALESCE(relation.relacl, acldefault('r', relation.relowner))
+				) AS grant_entry
+				WHERE relation.oid = 'public.organizations'::regclass
+					AND grant_entry.grantee = 0
+				UNION ALL
+				SELECT 1
+				FROM pg_catalog.pg_attribute AS attribute
+				CROSS JOIN LATERAL aclexplode(attribute.attacl) AS grant_entry
+				WHERE attribute.attrelid = 'public.organizations'::regclass
+					AND attribute.attnum > 0
+					AND NOT attribute.attisdropped
+					AND grant_entry.grantee = 0
+			) AS exposed
+		`;
+		expect(privileges).toEqual([{ exposed: false }]);
+	});
 });
