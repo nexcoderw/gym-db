@@ -52,9 +52,20 @@ enum OrganizationOwnerInvitationStatus {
   @@map("organization_owner_invitation_status")
 }
 
+enum OrganizationOwnerInvitationDeliveryStatus {
+  QUEUED     @map("queued")
+  PROCESSING @map("processing")
+  CONFIRMED  @map("confirmed")
+  FAILED     @map("failed")
+  UNCERTAIN  @map("uncertain")
+
+  @@map("organization_owner_invitation_delivery_status")
+}
+
 enum OrganizationOwnershipAuditAction {
-  INVITATION_CREATED @map("invitation_created")
-  INVITATION_REVOKED @map("invitation_revoked")
+  INVITATION_CREATED         @map("invitation_created")
+  INVITATION_REVOKED         @map("invitation_revoked")
+  INVITATION_DELIVERY_QUEUED @map("invitation_delivery_queued")
 
   @@map("organization_ownership_audit_action")
 }
@@ -99,6 +110,7 @@ model Organization {
   memberships          OrganizationMembership[]
   roles                OrganizationRole[]
   ownerInvitations     OrganizationOwnerInvitation[]
+  ownerInvitationDeliveries OrganizationOwnerInvitationDelivery[]
   ownershipAuditEvents OrganizationOwnershipAuditEvent[]
 
   @@index([status, createdAt(sort: Desc), id], map: "organizations_status_created_at_id_idx")
@@ -204,12 +216,56 @@ model OrganizationOwnerInvitation {
   organization             Organization                      @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitations_organization_fkey")
   invitedByPlatformStaff   PlatformStaff                     @relation(fields: [invitedByPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitations_actor_fkey")
   auditEvents              OrganizationOwnershipAuditEvent[]
+  delivery                 OrganizationOwnerInvitationDelivery?
 
   @@unique([organizationId, id], map: "organization_owner_invitations_organization_id_key")
   @@index([organizationId, status, createdAt(sort: Desc), id], map: "organization_owner_invitations_org_status_created_id_idx")
   @@index([organizationId, invitedEmail, createdAt(sort: Desc), id], map: "organization_owner_invitations_org_email_created_id_idx")
   @@index([organizationId, invitedByPlatformStaffId, createdAt(sort: Desc), id], map: "organization_owner_invitations_org_actor_created_id_idx")
   @@map("organization_owner_invitations")
+}
+
+/// Durable delivery reservation for one owner invitation. A row records administrator-authorized
+/// preparation and worker/provider outcomes; it grants no identity, membership, role or session.
+/// Ciphertext is authenticated, purpose-bound token material and must be erased after terminal use.
+model OrganizationOwnerInvitationDelivery {
+  id                         String                                    @id(map: "organization_owner_invitation_deliveries_pkey") @default(uuid()) @db.Uuid
+  organizationId             String                                    @map("organization_id") @db.Uuid
+  ownerInvitationId          String                                    @map("owner_invitation_id") @db.Uuid
+  requestedByPlatformStaffId String                                    @map("requested_by_platform_staff_id") @db.Uuid
+  status                     OrganizationOwnerInvitationDeliveryStatus @default(QUEUED)
+  attemptCount               Int                                       @default(0) @map("attempt_count")
+  maxAttempts                Int                                       @default(3) @map("max_attempts")
+  nextAttemptAt              DateTime?                                 @map("next_attempt_at") @db.Timestamptz(6)
+  leaseAcquiredAt            DateTime?                                 @map("lease_acquired_at") @db.Timestamptz(6)
+  leaseExpiresAt             DateTime?                                 @map("lease_expires_at") @db.Timestamptz(6)
+  claimedBy                  String?                                   @map("claimed_by") @db.VarChar(120)
+  providerIdempotencyKey     String                                    @unique(map: "organization_owner_invitation_deliveries_provider_idempotency_key") @map("provider_idempotency_key") @db.VarChar(128)
+  providerMessageId          String?                                   @unique(map: "organization_owner_invitation_deliveries_provider_message_id_key") @map("provider_message_id") @db.VarChar(128)
+  lastErrorCode              String?                                   @map("last_error_code") @db.VarChar(63)
+  tokenDigest                String?                                   @unique(map: "organization_owner_invitation_deliveries_token_digest_key") @map("token_digest") @db.VarChar(128)
+  tokenCiphertext            Bytes?                                    @map("token_ciphertext")
+  tokenInitializationVector  Bytes?                                    @map("token_initialization_vector")
+  tokenAuthenticationTag     Bytes?                                    @map("token_authentication_tag")
+  tokenEncryptionKeyId       String?                                   @map("token_encryption_key_id") @db.VarChar(120)
+  tokenEncryptionVersion     Int?                                      @map("token_encryption_version")
+  tokenExpiresAt             DateTime                                  @map("token_expires_at") @db.Timestamptz(6)
+  confirmedAt                DateTime?                                 @map("confirmed_at") @db.Timestamptz(6)
+  failedAt                   DateTime?                                 @map("failed_at") @db.Timestamptz(6)
+  uncertainAt                DateTime?                                 @map("uncertain_at") @db.Timestamptz(6)
+  tokenErasedAt              DateTime?                                 @map("token_erased_at") @db.Timestamptz(6)
+  createdAt                  DateTime                                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime                                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization               Organization                              @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitation_deliveries_organization_fkey")
+  ownerInvitation            OrganizationOwnerInvitation               @relation(fields: [organizationId, ownerInvitationId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitation_deliveries_invitation_fkey")
+  requestedByPlatformStaff   PlatformStaff                             @relation(fields: [requestedByPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_owner_invitation_deliveries_actor_fkey")
+
+  @@unique([organizationId, id], map: "organization_owner_invitation_deliveries_organization_id_key")
+  @@unique([organizationId, ownerInvitationId], map: "organization_owner_invitation_deliveries_organization_invitation_key")
+  @@index([organizationId, status, nextAttemptAt, id], map: "organization_owner_invitation_deliveries_org_status_next_id_idx")
+  @@index([organizationId, requestedByPlatformStaffId, createdAt(sort: Desc), id], map: "organization_owner_invitation_deliveries_org_actor_created_id_idx")
+  @@index([status, nextAttemptAt, leaseExpiresAt, id], map: "organization_owner_invitation_deliveries_worker_claim_idx")
+  @@map("organization_owner_invitation_deliveries")
 }
 
 /// Successful owner-invitation mutations only. Action-specific SQL checks constrain metadata,
@@ -270,6 +326,7 @@ model PlatformStaff {
   organizationAuditEvents  OrganizationAuditEvent[]
   authorizationAuditEvents PlatformAuthorizationAuditEvent[]
   ownerInvitationsCreated  OrganizationOwnerInvitation[]
+  ownerInvitationDeliveriesRequested OrganizationOwnerInvitationDelivery[]
   ownershipAuditEvents     OrganizationOwnershipAuditEvent[]
 
   @@index([status], map: "platform_staff_status_idx")
