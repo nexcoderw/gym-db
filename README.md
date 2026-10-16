@@ -1876,7 +1876,7 @@ ALTER TABLE public.organization_owner_invitation_deliveries
       token_authentication_tag, token_encryption_key_id, token_encryption_version) = 6
       AND token_erased_at IS NULL
       AND token_digest COLLATE "C" ~ '^[0-9a-f]{64}$'
-      AND octet_length(token_ciphertext) BETWEEN 32 AND 512
+      AND octet_length(token_ciphertext) BETWEEN 32 AND 4096
       AND octet_length(token_initialization_vector) = 12
       AND octet_length(token_authentication_tag) = 16
       AND char_length(token_encryption_key_id) BETWEEN 1 AND 120
@@ -2086,7 +2086,8 @@ ALTER TABLE public.organization_ownership_audit_events
     END
   ) IS TRUE);
 
-REVOKE ALL ON TABLE public.organization_owner_invitation_deliveries FROM PUBLIC;
+REVOKE ALL ON TABLE public.organization_owner_invitation_deliveries,
+  public.organization_owner_invitations, public.organization_ownership_audit_events FROM PUBLIC;
 REVOKE ALL ON TYPE public.organization_owner_invitation_delivery_status FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.guard_owner_invitation_delivery(),
   public.guard_organization_owner_invitation_identity() FROM PUBLIC;
@@ -2094,6 +2095,12 @@ COMMIT;
 ```
 
 ### Conditional updates, leases and reconciliation
+
+Envelope version 1 is bounded to 4096 ciphertext bytes, not the earlier 512-byte proposal. It contains
+the token plus the minimal immutable email snapshot (recipient, gym name, sender, fixed origin/path).
+Freezing that encrypted snapshot keeps the provider payload identical across retries even if gym
+branding or configuration changes. Plaintext is never stored. Review this bound in the **new repair
+draft**, never modify an applied foundation. The API preflight requires this reviewed bound.
 
 Only a new `QUEUED` reservation with zero attempts may be inserted. Each claim increments attempts by
 exactly one, clears prior known-failure metadata, and sets one lease (at most five minutes, ending no
@@ -2136,8 +2143,16 @@ organizations and delivery rows, plus column UPDATE for invitation `status`, `to
 `token_erased_at`, `updated_at`. Do not grant modification of immutable reservation IDs/actor/key/expiry.
 Row locking also requires PostgreSQL UPDATE privilege on at least one column of each locked relation;
 review a minimal harmless `organizations.updated_at` column grant for that worker, not broad UPDATE.
+Execution-time authorization also needs SELECT on `platform_staff`, `users`, `platform_staff_roles`,
+`platform_roles`, `platform_role_permissions` and `platform_permissions`; review those platform-only
+grants separately. The worker does not read password credentials, MFA secrets or session tokens.
 Trigger functions use SECURITY INVOKER; callers need parent SELECT/locking privileges. Tenant roles
 must not inherit any worker or platform role and receive no delivery-record grants.
+Review explicit USAGE on the relevant status/action enum types for the API/worker roles; no type
+ownership or DDL privilege is needed. PUBLIC column ACLs must also be reviewed and revoked explicitly
+if present: removing table grants must not be treated as proof that column grants or inherited
+permissions disappeared. The API preflight rejects PUBLIC table/column access on invitations,
+deliveries and ownership audit records.
 
 Separately verify effective privileges, column ACLs, inherited memberships, table ownership,
 default privileges and BYPASSRLS. A direct REVOKE cannot remove privileges inherited from another
