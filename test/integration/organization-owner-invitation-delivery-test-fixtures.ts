@@ -24,14 +24,11 @@ export class OrganizationOwnerInvitationDeliveryTestFixtures {
 		const deliveryIds = [...this.#deliveryIds];
 		if (deliveryIds.length === 0) return;
 
-		await prisma.$transaction(
-			async (transaction) => {
-				await transaction.organizationOwnerInvitationDelivery.deleteMany({
-					where: { id: { in: deliveryIds } },
-				});
-			},
-			transactionOptions,
-		);
+		await prisma.$transaction(async (transaction) => {
+			await transaction.organizationOwnerInvitationDelivery.deleteMany({
+				where: { id: { in: deliveryIds } },
+			});
+		}, transactionOptions);
 
 		this.#deliveryIds.clear();
 	}

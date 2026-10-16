@@ -24,9 +24,7 @@ describe('organization owner invitation delivery schema contract', () => {
 		const status = /enum OrganizationOwnerInvitationDeliveryStatus \{[\s\S]*?\n\}/u.exec(
 			source,
 		)?.[0];
-		const delivery = /model OrganizationOwnerInvitationDelivery \{[\s\S]*?\n\}/u.exec(
-			source,
-		)?.[0];
+		const delivery = /model OrganizationOwnerInvitationDelivery \{[\s\S]*?\n\}/u.exec(source)?.[0];
 
 		expect(status).toBeDefined();
 		for (const value of ['queued', 'processing', 'confirmed', 'failed', 'uncertain']) {
@@ -79,12 +77,8 @@ describe('organization owner invitation delivery schema contract', () => {
 			);
 		}
 		expect(delivery).toMatch(/claimedBy\s+String\?[^\n]+@db\.VarChar\(120\)/u);
-		expect(delivery).toMatch(
-			/providerIdempotencyKey\s+String\s+@unique[^\n]+@db\.VarChar\(128\)/u,
-		);
-		expect(delivery).toMatch(
-			/providerMessageId\s+String\?\s+@unique[^\n]+@db\.VarChar\(128\)/u,
-		);
+		expect(delivery).toMatch(/providerIdempotencyKey\s+String\s+@unique[^\n]+@db\.VarChar\(128\)/u);
+		expect(delivery).toMatch(/providerMessageId\s+String\?\s+@unique[^\n]+@db\.VarChar\(128\)/u);
 		expect(delivery).toMatch(/lastErrorCode\s+String\?[^\n]+@db\.VarChar\(63\)/u);
 		expect(delivery).toContain(
 			'@@index([status, nextAttemptAt, leaseExpiresAt, id], map: "organization_owner_invitation_deliveries_worker_claim_idx")',
@@ -93,9 +87,7 @@ describe('organization owner invitation delivery schema contract', () => {
 
 	it('enforces one tenant-scoped delivery reservation per invitation', async () => {
 		const source = await schema();
-		const delivery = /model OrganizationOwnerInvitationDelivery \{[\s\S]*?\n\}/u.exec(
-			source,
-		)?.[0];
+		const delivery = /model OrganizationOwnerInvitationDelivery \{[\s\S]*?\n\}/u.exec(source)?.[0];
 		const organization = /model Organization \{[\s\S]*?\n\}/u.exec(source)?.[0];
 		const invitation = /model OrganizationOwnerInvitation \{[\s\S]*?\n\}/u.exec(source)?.[0];
 		const staff = /model PlatformStaff \{[\s\S]*?\n\}/u.exec(source)?.[0];

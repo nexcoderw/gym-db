@@ -89,9 +89,7 @@ describe('owner enrollment proof and recipient acceptance audit foundation', () 
 			) AND NOT tgisinternal AND tgenabled IN ('O', 'A')
 		`;
 		const missing = [
-			...tables
-				.filter(({ relation }) => relation === null)
-				.map(({ name }) => `table ${name}`),
+			...tables.filter(({ relation }) => relation === null).map(({ name }) => `table ${name}`),
 			...requiredChecks
 				.filter((name) => !checks.some((check) => check.name === name))
 				.map((name) => `validated check ${name}`),
