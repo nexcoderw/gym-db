@@ -74,10 +74,22 @@ describe('organization owner invitation delivery foundation', () => {
 			WHERE schemaname = 'public'
 				AND tablename = 'organization_owner_invitation_deliveries'
 		`;
+		const triggers = await prisma.$queryRaw<{ name: string }[]>`
+			SELECT tgname AS name FROM pg_catalog.pg_trigger
+			WHERE tgrelid = to_regclass('public.organization_owner_invitation_deliveries')
+				AND NOT tgisinternal AND tgenabled IN ('O', 'A')
+		`;
+		const [auditCheck] = await prisma.$queryRaw<{ definition: string }[]>`
+			SELECT pg_get_constraintdef(oid) AS definition FROM pg_catalog.pg_constraint
+			WHERE conrelid = to_regclass('public.organization_ownership_audit_events')
+				AND conname = 'organization_ownership_audit_events_metadata_check' AND convalidated
+		`;
 		if (
 			table?.name === null ||
 			table === undefined ||
 			requiredChecks.some((name) => !checks.some((check) => check.name === name)) ||
+			!triggers.some(({ name }) => name === 'owner_invitation_delivery_guard') ||
+			!auditCheck?.definition.includes('invitation_delivery_queued') ||
 			!indexes.some(
 				({ name }) => name === 'owner_invitation_deliveries_org_invitation_key',
 			) ||
@@ -86,8 +98,9 @@ describe('organization owner invitation delivery foundation', () => {
 			)
 		) {
 			throw new Error(
-				'Owner invitation delivery prerequisites are missing: approve and apply the Step 18 ' +
-					'migration, lifecycle constraints, indexes and grants before integration tests.',
+				'Owner invitation delivery prerequisites are missing: review and apply the Step 21 ' +
+					'forward repair, six validated checks, transition guard, queue-audit metadata and ' +
+					'disposable-test grants before integration tests. Do not rewrite the foundation.',
 			);
 		}
 		await verifyTestTablePrivileges(prisma, [
@@ -170,12 +183,14 @@ describe('organization owner invitation delivery foundation', () => {
 		requestedByPlatformStaffId: string,
 	): Prisma.OrganizationOwnerInvitationDeliveryUncheckedCreateInput & { readonly id: string } {
 		const id = deliveries.reserveDeliveryId(requireVerified());
+		const createdAt = new Date();
 		return {
 			id,
 			organizationId,
 			ownerInvitationId,
 			requestedByPlatformStaffId,
-			nextAttemptAt: new Date(),
+			createdAt,
+			nextAttemptAt: createdAt,
 			providerIdempotencyKey: `owner-invitation-delivery:${id}`,
 			tokenDigest: createHash('sha256').update(`fictional-token:${id}`).digest('hex'),
 			tokenCiphertext: Buffer.from(`encrypted-fixture-${id}`),
@@ -185,6 +200,39 @@ describe('organization owner invitation delivery foundation', () => {
 			tokenEncryptionVersion: 1,
 			tokenExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000),
 		};
+	}
+
+	const clearedLease = { leaseAcquiredAt: null, leaseExpiresAt: null, claimedBy: null };
+	function erasedToken(tokenErasedAt: Date) {
+		return {
+			tokenDigest: null,
+			tokenCiphertext: null,
+			tokenInitializationVector: null,
+			tokenAuthenticationTag: null,
+			tokenEncryptionKeyId: null,
+			tokenEncryptionVersion: null,
+			tokenErasedAt,
+		};
+	}
+
+	async function createClaimedDelivery(
+		data: ReturnType<typeof deliveryData>,
+		claimedBy: string,
+	): Promise<Date> {
+		await prisma.organizationOwnerInvitationDelivery.create({ data });
+		const claimedAt = new Date();
+		await prisma.organizationOwnerInvitationDelivery.update({
+			where: { id: data.id },
+			data: {
+				status: OrganizationOwnerInvitationDeliveryStatus.PROCESSING,
+				attemptCount: { increment: 1 },
+				nextAttemptAt: null,
+				leaseAcquiredAt: claimedAt,
+				leaseExpiresAt: new Date(claimedAt.getTime() + 60_000),
+				claimedBy,
+			},
+		});
+		return claimedAt;
 	}
 
 	function queuedAuditData(
@@ -300,37 +348,47 @@ describe('organization owner invitation delivery foundation', () => {
 		});
 	});
 
-	it('recovers an expired worker lease without resetting the bounded attempt count', async () => {
+	it('recovers an expired worker lease as uncertain without scheduling another send', async () => {
 		const organizationId = await createOrganization();
 		const actorId = await createActor();
 		const invitationId = await createInvitation(organizationId, actorId);
-		const now = new Date();
 		const delivery = deliveryData(organizationId, invitationId, actorId);
-		await prisma.organizationOwnerInvitationDelivery.create({
-			data: {
-				...delivery,
-				status: OrganizationOwnerInvitationDeliveryStatus.PROCESSING,
-				attemptCount: 1,
-				nextAttemptAt: null,
-				leaseAcquiredAt: new Date(now.getTime() - 120_000),
-				leaseExpiresAt: new Date(now.getTime() - 60_000),
-				claimedBy: 'expired-worker',
-			},
-		});
+		await prisma.organizationOwnerInvitationDelivery.create({ data: delivery });
+		// Database time avoids depending on application/Neon clock skew for a short test lease.
+		await prisma.$executeRaw`
+			UPDATE public.organization_owner_invitation_deliveries
+			SET status = 'processing', attempt_count = attempt_count + 1, next_attempt_at = NULL,
+				lease_acquired_at = clock_timestamp(),
+				lease_expires_at = clock_timestamp() + interval '50 milliseconds',
+				claimed_by = 'expired-worker', updated_at = clock_timestamp()
+			WHERE organization_id = ${organizationId}::uuid AND id = ${delivery.id}::uuid
+				AND status = 'queued'
+		`;
+		await new Promise<void>((resolve) => setTimeout(resolve, 100));
+		const now = new Date();
+
+		await expect(
+			prisma.organizationOwnerInvitationDelivery.update({
+				where: { id: delivery.id },
+				data: {
+					status: OrganizationOwnerInvitationDeliveryStatus.QUEUED,
+					nextAttemptAt: now,
+					...clearedLease,
+				},
+			}),
+		).rejects.toThrow('owner_invitation_delivery_guard');
 
 		const recovered = await prisma.organizationOwnerInvitationDelivery.updateMany({
 			where: {
 				id: delivery.id,
 				status: OrganizationOwnerInvitationDeliveryStatus.PROCESSING,
 				leaseExpiresAt: { lt: now },
-				attemptCount: { lt: 3 },
 			},
 			data: {
-				status: OrganizationOwnerInvitationDeliveryStatus.QUEUED,
-				nextAttemptAt: now,
-				leaseAcquiredAt: null,
-				leaseExpiresAt: null,
-				claimedBy: null,
+				status: OrganizationOwnerInvitationDeliveryStatus.UNCERTAIN,
+				uncertainAt: now,
+				lastErrorCode: 'WORKER_LEASE_EXPIRED',
+				...clearedLease,
 			},
 		});
 
@@ -340,8 +398,9 @@ describe('organization owner invitation delivery foundation', () => {
 				where: { id: delivery.id },
 			}),
 		).toMatchObject({
-			status: OrganizationOwnerInvitationDeliveryStatus.QUEUED,
+			status: OrganizationOwnerInvitationDeliveryStatus.UNCERTAIN,
 			attemptCount: 1,
+			nextAttemptAt: null,
 			leaseAcquiredAt: null,
 			leaseExpiresAt: null,
 			claimedBy: null,
@@ -357,19 +416,8 @@ describe('organization owner invitation delivery foundation', () => {
 			throw new Error('The delivery fixture must contain a token digest.');
 		}
 		const tokenDigest = delivery.tokenDigest;
-		const claimedAt = new Date(Date.now() + 1_000);
-		const sentAt = new Date(claimedAt.getTime() + 1_000);
-		await prisma.organizationOwnerInvitationDelivery.create({
-			data: {
-				...delivery,
-				status: OrganizationOwnerInvitationDeliveryStatus.PROCESSING,
-				attemptCount: 1,
-				nextAttemptAt: null,
-				leaseAcquiredAt: claimedAt,
-				leaseExpiresAt: new Date(claimedAt.getTime() + 60_000),
-				claimedBy: 'confirmation-worker',
-			},
-		});
+		await createClaimedDelivery(delivery, 'confirmation-worker');
+		const sentAt = new Date();
 
 		await prisma.$transaction(async (transaction) => {
 			const transitioned = await transaction.organizationOwnerInvitation.updateMany({
@@ -433,18 +481,8 @@ describe('organization owner invitation delivery foundation', () => {
 		const actorId = await createActor();
 		const invitationId = await createInvitation(organizationId, actorId);
 		const delivery = deliveryData(organizationId, invitationId, actorId);
-		const now = new Date(Date.now() + 1_000);
-		await prisma.organizationOwnerInvitationDelivery.create({
-			data: {
-				...delivery,
-				status: OrganizationOwnerInvitationDeliveryStatus.PROCESSING,
-				attemptCount: 1,
-				nextAttemptAt: null,
-				leaseAcquiredAt: now,
-				leaseExpiresAt: new Date(now.getTime() + 60_000),
-				claimedBy: 'revocation-race-worker',
-			},
-		});
+		await createClaimedDelivery(delivery, 'revocation-race-worker');
+		const now = new Date();
 		await prisma.organizationOwnerInvitation.update({
 			where: { id: invitationId },
 			data: { status: OrganizationOwnerInvitationStatus.REVOKED, revokedAt: now },
@@ -489,15 +527,16 @@ describe('organization owner invitation delivery foundation', () => {
 		const actorId = await createActor();
 		const invitationId = await createInvitation(organizationId, actorId);
 		const failed = deliveryData(organizationId, invitationId, actorId);
-		const failedAt = new Date(Date.now() + 1_000);
-		await prisma.organizationOwnerInvitationDelivery.create({
+		await createClaimedDelivery(failed, 'known-failure-worker');
+		const failedAt = new Date();
+		await prisma.organizationOwnerInvitationDelivery.update({
+			where: { id: failed.id },
 			data: {
-				...failed,
 				status: OrganizationOwnerInvitationDeliveryStatus.FAILED,
-				attemptCount: 1,
 				failedAt,
-				lastErrorCode: 'PROVIDER_REJECTED',
+				lastErrorCode: 'PROVIDER_RATE_LIMITED',
 				nextAttemptAt: new Date(failedAt.getTime() + 60_000),
+				...clearedLease,
 			},
 		});
 		expect(
@@ -507,19 +546,20 @@ describe('organization owner invitation delivery foundation', () => {
 		).toMatchObject({
 			status: OrganizationOwnerInvitationDeliveryStatus.FAILED,
 			attemptCount: 1,
-			lastErrorCode: 'PROVIDER_REJECTED',
+			lastErrorCode: 'PROVIDER_RATE_LIMITED',
 		});
 
 		const uncertainInvitationId = await createInvitation(organizationId, actorId);
 		const uncertain = deliveryData(organizationId, uncertainInvitationId, actorId);
-		await prisma.organizationOwnerInvitationDelivery.create({
+		await createClaimedDelivery(uncertain, 'timeout-worker');
+		await prisma.organizationOwnerInvitationDelivery.update({
+			where: { id: uncertain.id },
 			data: {
-				...uncertain,
 				status: OrganizationOwnerInvitationDeliveryStatus.UNCERTAIN,
-				attemptCount: 1,
-				uncertainAt: new Date(Date.now() + 1_000),
+				uncertainAt: new Date(),
 				lastErrorCode: 'PROVIDER_TIMEOUT',
 				nextAttemptAt: null,
+				...clearedLease,
 			},
 		});
 		expect(
@@ -553,7 +593,7 @@ describe('organization owner invitation delivery foundation', () => {
 					confirmedAt: null,
 				},
 			}),
-		).rejects.toThrow('organization_owner_invitation_deliveries_lifecycle_check');
+		).rejects.toThrow('owner_invitation_delivery_guard');
 	});
 
 	it('rolls back delivery preparation when its required administrator audit fails', async () => {
@@ -581,6 +621,354 @@ describe('organization owner invitation delivery foundation', () => {
 		).toBeNull();
 	});
 
+	it('keeps reservation identity, crypto and retry policy immutable', async () => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitationId = await createInvitation(organizationId, actorId);
+		const delivery = deliveryData(organizationId, invitationId, actorId);
+		await prisma.organizationOwnerInvitationDelivery.create({ data: delivery });
+		const otherOrganizationId = await createOrganization('Kicukiro Training');
+		const otherActorId = await createActor();
+		const otherInvitationId = await createInvitation(organizationId, actorId);
+		const changes: readonly Prisma.OrganizationOwnerInvitationDeliveryUncheckedUpdateInput[] = [
+			{ id: deliveries.reserveDeliveryId(requireVerified()) },
+			{ organizationId: otherOrganizationId },
+			{ ownerInvitationId: otherInvitationId },
+			{ requestedByPlatformStaffId: otherActorId },
+			{ providerIdempotencyKey: `changed:${delivery.id}` },
+			{ tokenDigest: 'f'.repeat(64) },
+			{ tokenCiphertext: Buffer.alloc(43, 9) },
+			{ tokenExpiresAt: new Date(Date.now() + 60_000) },
+			{ maxAttempts: 4 },
+		];
+		for (const data of changes) {
+			await expect(
+				prisma.organizationOwnerInvitationDelivery.update({ where: { id: delivery.id }, data }),
+			).rejects.toThrow('owner_invitation_delivery_guard');
+		}
+	});
+
+	it.each([
+		{ tokenInitializationVector: Buffer.alloc(11) },
+		{ tokenAuthenticationTag: Buffer.alloc(15) },
+		{ tokenCiphertext: Buffer.alloc(513) },
+		{ tokenEncryptionVersion: 2 },
+		{ tokenEncryptionKeyId: 'not a key id' },
+		{ tokenDigest: 'not-a-hmac' },
+	])('rejects malformed encrypted metadata %p', async (change) => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitationId = await createInvitation(organizationId, actorId);
+		await expect(
+			prisma.organizationOwnerInvitationDelivery.create({
+				data: { ...deliveryData(organizationId, invitationId, actorId), ...change },
+			}),
+		).rejects.toThrow('organization_owner_invitation_deliveries_token_material_check');
+	});
+
+	it('enforces attempt bounds, lease duration and typed identifiers', async () => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitationId = await createInvitation(organizationId, actorId);
+		const delivery = deliveryData(organizationId, invitationId, actorId);
+		await expect(
+			prisma.organizationOwnerInvitationDelivery.create({ data: { ...delivery, maxAttempts: 11 } }),
+		).rejects.toThrow('organization_owner_invitation_deliveries_retry_check');
+		await expect(
+			prisma.organizationOwnerInvitationDelivery.create({
+				data: { ...delivery, providerIdempotencyKey: 'invalid provider key' },
+			}),
+		).rejects.toThrow('organization_owner_invitation_deliveries_bounded_text_check');
+		await prisma.organizationOwnerInvitationDelivery.create({ data: delivery });
+		const claimedAt = new Date();
+		await expect(
+			prisma.organizationOwnerInvitationDelivery.update({
+				where: { id: delivery.id },
+				data: {
+					status: OrganizationOwnerInvitationDeliveryStatus.PROCESSING,
+					attemptCount: 1,
+					nextAttemptAt: null,
+					leaseAcquiredAt: claimedAt,
+					leaseExpiresAt: new Date(claimedAt.getTime() + 360_000),
+					claimedBy: 'too-long-lease',
+				},
+			}),
+		).rejects.toThrow('organization_owner_invitation_deliveries_lease_check');
+	});
+
+	it('bounds token lifetime and refuses decreasing worker attempts', async () => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitationId = await createInvitation(organizationId, actorId);
+		const delivery = deliveryData(organizationId, invitationId, actorId);
+		await expect(
+			prisma.organizationOwnerInvitationDelivery.create({
+				data: { ...delivery, tokenExpiresAt: new Date(Date.now() + 8 * 86_400_000) },
+			}),
+		).rejects.toThrow('organization_owner_invitation_deliveries_timestamp_order_check');
+		await createClaimedDelivery(delivery, 'attempt-bound-worker');
+		await expect(
+			prisma.organizationOwnerInvitationDelivery.update({
+				where: { id: delivery.id },
+				data: { attemptCount: 0 },
+			}),
+		).rejects.toThrow('owner_invitation_delivery_guard');
+	});
+
+	it('rejects a direct confirmation without an atomically matching SENT invitation', async () => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitationId = await createInvitation(organizationId, actorId);
+		const delivery = deliveryData(organizationId, invitationId, actorId);
+		await createClaimedDelivery(delivery, 'false-confirmation-worker');
+		const now = new Date();
+		await expect(
+			prisma.organizationOwnerInvitationDelivery.update({
+				where: { id: delivery.id },
+				data: {
+					status: OrganizationOwnerInvitationDeliveryStatus.CONFIRMED,
+					providerMessageId: `resend-${delivery.id}`,
+					confirmedAt: now,
+					...clearedLease,
+					...erasedToken(now),
+				},
+			}),
+		).rejects.toThrow('owner_invitation_delivery_guard');
+		const invitation = await prisma.organizationOwnerInvitation.findUniqueOrThrow({
+			where: { id: invitationId },
+		});
+		expect(invitation.status).toBe(OrganizationOwnerInvitationStatus.PENDING_DELIVERY);
+		expect(invitation.tokenDigest).toBeNull();
+	});
+
+	it('refuses claims and direct resurrection after audited invitation revocation', async () => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitationId = await createInvitation(organizationId, actorId);
+		const delivery = deliveryData(organizationId, invitationId, actorId);
+		await prisma.organizationOwnerInvitationDelivery.create({ data: delivery });
+		const now = new Date();
+		await prisma.$transaction(async (transaction) => {
+			await transaction.organizationOwnerInvitation.update({
+				where: { id: invitationId },
+				data: { status: OrganizationOwnerInvitationStatus.REVOKED, revokedAt: now },
+			});
+			await transaction.organizationOwnershipAuditEvent.create({
+				data: {
+					...queuedAuditData(organizationId, invitationId, actorId),
+					action: OrganizationOwnershipAuditAction.INVITATION_REVOKED,
+					resultingInvitationStatus: OrganizationOwnerInvitationStatus.REVOKED,
+				},
+			});
+		}, transactionOptions);
+		await expect(
+			prisma.organizationOwnerInvitationDelivery.update({
+				where: { id: delivery.id },
+				data: {
+					status: OrganizationOwnerInvitationDeliveryStatus.PROCESSING,
+					attemptCount: 1,
+					nextAttemptAt: null,
+					leaseAcquiredAt: now,
+					leaseExpiresAt: new Date(now.getTime() + 60_000),
+					claimedBy: 'revoked-claim-worker',
+				},
+			}),
+		).rejects.toThrow('owner_invitation_delivery_guard');
+		await expect(
+			prisma.organizationOwnerInvitation.update({
+				where: { id: invitationId },
+				data: { status: OrganizationOwnerInvitationStatus.PENDING_DELIVERY, revokedAt: null },
+			}),
+		).rejects.toThrow('organization_owner_invitation_identity_guard');
+		await prisma.organizationOwnerInvitationDelivery.update({
+			where: { id: delivery.id },
+			data: {
+				status: OrganizationOwnerInvitationDeliveryStatus.FAILED,
+				nextAttemptAt: null,
+				failedAt: new Date(),
+				lastErrorCode: 'INVITATION_REVOKED',
+				...erasedToken(new Date()),
+			},
+		});
+	});
+
+	it('retains uncertainty through cleanup and rejects attempts to enqueue it again', async () => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitationId = await createInvitation(organizationId, actorId);
+		const delivery = deliveryData(organizationId, invitationId, actorId);
+		await createClaimedDelivery(delivery, 'uncertain-cleanup-worker');
+		await prisma.organizationOwnerInvitationDelivery.update({
+			where: { id: delivery.id },
+			data: {
+				status: OrganizationOwnerInvitationDeliveryStatus.UNCERTAIN,
+				uncertainAt: new Date(),
+				lastErrorCode: 'PROVIDER_TIMEOUT',
+				...clearedLease,
+			},
+		});
+		await expect(
+			prisma.organizationOwnerInvitationDelivery.update({
+				where: { id: delivery.id },
+				data: {
+					status: OrganizationOwnerInvitationDeliveryStatus.QUEUED,
+					nextAttemptAt: new Date(),
+					uncertainAt: null,
+					lastErrorCode: null,
+				},
+			}),
+		).rejects.toThrow('owner_invitation_delivery_guard');
+		await prisma.organizationOwnerInvitationDelivery.update({
+			where: { id: delivery.id },
+			data: erasedToken(new Date()),
+		});
+		const cleaned = await prisma.organizationOwnerInvitationDelivery.findUniqueOrThrow({
+			where: { id: delivery.id },
+		});
+		expect(cleaned.status).toBe(OrganizationOwnerInvitationDeliveryStatus.UNCERTAIN);
+		expect(cleaned.tokenCiphertext).toBeNull();
+		expect(cleaned.lastErrorCode).toBe('PROVIDER_TIMEOUT');
+	});
+
+	it('keeps concurrent revocation authoritative even when provider finalization wins first', async () => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitationId = await createInvitation(organizationId, actorId);
+		const delivery = deliveryData(organizationId, invitationId, actorId);
+		await createClaimedDelivery(delivery, 'concurrent-finalization-worker');
+
+		async function lockParents(transaction: Prisma.TransactionClient): Promise<void> {
+			await transaction.$queryRaw`
+				SELECT id FROM public.organizations WHERE id = ${organizationId}::uuid FOR SHARE
+			`;
+			await transaction.$queryRaw`
+				SELECT id FROM public.organization_owner_invitations
+				WHERE organization_id = ${organizationId}::uuid AND id = ${invitationId}::uuid
+				FOR UPDATE
+			`;
+		}
+		const [confirmed] = await Promise.all([
+			prisma.$transaction(async (transaction) => {
+				await lockParents(transaction);
+				const now = new Date();
+				const sent = await transaction.organizationOwnerInvitation.updateMany({
+					where: {
+						id: invitationId,
+						organizationId,
+						status: OrganizationOwnerInvitationStatus.PENDING_DELIVERY,
+					},
+					data: {
+						status: OrganizationOwnerInvitationStatus.SENT,
+						tokenDigest: delivery.tokenDigest,
+						expiresAt: delivery.tokenExpiresAt,
+						sentAt: now,
+					},
+				});
+				if (sent.count === 0) return false;
+				const finalized = await transaction.organizationOwnerInvitationDelivery.updateMany({
+					where: {
+						id: delivery.id,
+						organizationId,
+						status: OrganizationOwnerInvitationDeliveryStatus.PROCESSING,
+						claimedBy: 'concurrent-finalization-worker',
+						leaseExpiresAt: { gt: now },
+					},
+					data: {
+						status: OrganizationOwnerInvitationDeliveryStatus.CONFIRMED,
+						confirmedAt: now,
+						providerMessageId: `resend-${delivery.id}`,
+						...clearedLease,
+						...erasedToken(now),
+					},
+				});
+				if (finalized.count !== 1) throw new Error('Fixture finalization lost its lease.');
+				return true;
+			}, transactionOptions),
+			prisma.$transaction(async (transaction) => {
+				await lockParents(transaction);
+				const previous = await transaction.organizationOwnerInvitation.findUniqueOrThrow({
+					where: { id: invitationId },
+				});
+				await transaction.organizationOwnerInvitation.update({
+					where: { id: invitationId },
+					data: {
+						status: OrganizationOwnerInvitationStatus.REVOKED,
+						tokenDigest: null,
+						revokedAt: new Date(),
+					},
+				});
+				await transaction.organizationOwnershipAuditEvent.create({
+					data: {
+						...queuedAuditData(organizationId, invitationId, actorId),
+						action: OrganizationOwnershipAuditAction.INVITATION_REVOKED,
+						previousInvitationStatus: previous.status,
+						resultingInvitationStatus: OrganizationOwnerInvitationStatus.REVOKED,
+					},
+				});
+			}, transactionOptions),
+		]);
+		if (!confirmed) {
+			await prisma.organizationOwnerInvitationDelivery.update({
+				where: { id: delivery.id },
+				data: {
+					status: OrganizationOwnerInvitationDeliveryStatus.UNCERTAIN,
+					uncertainAt: new Date(),
+					lastErrorCode: 'INVITATION_NO_LONGER_ELIGIBLE',
+					...clearedLease,
+				},
+			});
+		}
+		const finalInvitation = await prisma.organizationOwnerInvitation.findUniqueOrThrow({
+			where: { id: invitationId },
+		});
+		expect(finalInvitation.status).toBe(OrganizationOwnerInvitationStatus.REVOKED);
+		expect(finalInvitation.tokenDigest).toBeNull();
+		expect(await prisma.organizationMembership.count({ where: { organizationId } })).toBe(0);
+	});
+
+	it('keeps terminal known failures erased and prevents resurrection', async () => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitationId = await createInvitation(organizationId, actorId);
+		const delivery = deliveryData(organizationId, invitationId, actorId);
+		await prisma.organizationOwnerInvitationDelivery.create({ data: delivery });
+		await prisma.organizationOwnerInvitationDelivery.update({
+			where: { id: delivery.id },
+			data: {
+				status: OrganizationOwnerInvitationDeliveryStatus.FAILED,
+				failedAt: new Date(),
+				lastErrorCode: 'DELIVERY_CANCELLED',
+				nextAttemptAt: null,
+				...erasedToken(new Date()),
+			},
+		});
+		await expect(
+			prisma.organizationOwnerInvitationDelivery.update({
+				where: { id: delivery.id },
+				data: {
+					status: OrganizationOwnerInvitationDeliveryStatus.QUEUED,
+					failedAt: null,
+					lastErrorCode: null,
+					nextAttemptAt: new Date(),
+				},
+			}),
+		).rejects.toThrow('owner_invitation_delivery_guard');
+	});
+
+	it('rejects queue-audit metadata describing a different invitation transition', async () => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitationId = await createInvitation(organizationId, actorId);
+		await expect(
+			prisma.organizationOwnershipAuditEvent.create({
+				data: {
+					...queuedAuditData(organizationId, invitationId, actorId),
+					resultingInvitationStatus: OrganizationOwnerInvitationStatus.SENT,
+				},
+			}),
+		).rejects.toThrow('organization_ownership_audit_events_metadata_check');
+	});
+
 	it('keeps delivery persistence unavailable through PUBLIC', async () => {
 		const grants = await prisma.$queryRaw<{ count: number }[]>`
 			SELECT count(*)::integer AS count FROM pg_catalog.pg_class AS relation
@@ -591,6 +979,22 @@ describe('organization owner invitation delivery foundation', () => {
 				AND grant_entry.grantee = 0
 		`;
 		expect(grants).toEqual([{ count: 0 }]);
+		const publicObjects = await prisma.$queryRaw<{ count: number }[]>`
+			SELECT count(*)::integer AS count FROM (
+				SELECT grant_entry.grantee FROM pg_catalog.pg_type AS enum_type
+				CROSS JOIN LATERAL aclexplode(
+					coalesce(enum_type.typacl, acldefault('T', enum_type.typowner))
+				) AS grant_entry
+				WHERE enum_type.oid = 'public.organization_owner_invitation_delivery_status'::regtype
+				UNION ALL
+				SELECT grant_entry.grantee FROM pg_catalog.pg_proc AS routine
+				CROSS JOIN LATERAL aclexplode(
+					coalesce(routine.proacl, acldefault('f', routine.proowner))
+				) AS grant_entry
+				WHERE routine.oid = 'public.guard_owner_invitation_delivery()'::regprocedure
+			) AS effective_grants WHERE grantee = 0
+		`;
+		expect(publicObjects).toEqual([{ count: 0 }]);
 	});
 
 	it('cleans only reserved delivery rows and preserves an unrelated sentinel', async () => {
