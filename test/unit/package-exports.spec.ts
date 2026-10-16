@@ -28,6 +28,7 @@ describe('public package exports', () => {
 		expect(databasePackage.OrganizationOwnershipAuditAction).toEqual({
 			INVITATION_CREATED: 'INVITATION_CREATED',
 			INVITATION_REVOKED: 'INVITATION_REVOKED',
+			INVITATION_DELIVERY_QUEUED: 'INVITATION_DELIVERY_QUEUED',
 		});
 		expect(databasePackage.OrganizationAuditAction).toEqual({
 			CREATE: 'CREATE',
