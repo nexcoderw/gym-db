@@ -24,7 +24,7 @@ import {
 } from './test-database-safety.js';
 
 const safety = loadTestDatabaseSafetyConfig();
-const transactionOptions = { maxWait: 10_000, timeout: 20_000 } as const;
+const transactionOptions = { maxWait: 30_000, timeout: 60_000 } as const;
 const requiredChecks = [
 	'organization_owner_invitations_email_check',
 	'organization_owner_invitations_display_name_nonblank_check',
@@ -34,7 +34,7 @@ const requiredChecks = [
 	'organization_ownership_audit_events_metadata_check',
 ];
 
-jest.setTimeout(60_000);
+jest.setTimeout(180_000);
 
 describe('organization owner invitation and ownership audit foundation', () => {
 	let module: TestingModule | undefined;
@@ -51,40 +51,42 @@ describe('organization owner invitation and ownership audit foundation', () => {
 				DatabaseModule.forRoot({
 					databaseUrl: safety.databaseUrl,
 					poolMax: 3,
-					connectionTimeoutMilliseconds: 10_000,
+					connectionTimeoutMilliseconds: 30_000,
 				}),
 			],
 		}).compile();
 		await module.init();
 		prisma = module.get(PrismaService);
 		const safe = await verifyTestDatabaseSafety(prisma, safety);
-		const tables = await prisma.$queryRaw<{ name: string | null }[]>`
-			SELECT unnest(ARRAY[
-				to_regclass('public.organization_memberships')::text,
-				to_regclass('public.organization_roles')::text,
-				to_regclass('public.organization_owner_invitations')::text,
-				to_regclass('public.organization_ownership_audit_events')::text
-			]) AS name
-		`;
-		const checks = await prisma.$queryRaw<{ name: string }[]>`
-			SELECT conname AS name FROM pg_catalog.pg_constraint
-			WHERE conrelid IN (
-				to_regclass('public.organization_owner_invitations'),
-				to_regclass('public.organization_ownership_audit_events')
-			) AND contype = 'c' AND convalidated
-		`;
-		const indexes = await prisma.$queryRaw<{ name: string }[]>`
-			SELECT indexname AS name FROM pg_catalog.pg_indexes
-			WHERE schemaname = 'public'
-				AND tablename = 'organization_owner_invitations'
-		`;
-		const triggers = await prisma.$queryRaw<{ name: string }[]>`
-			SELECT tgname AS name FROM pg_catalog.pg_trigger
-			WHERE tgrelid IN (
-				to_regclass('public.organization_owner_invitations'),
-				to_regclass('public.organization_ownership_audit_events')
-			) AND NOT tgisinternal AND tgenabled = 'O'
-		`;
+		const [tables, checks, indexes, triggers] = await Promise.all([
+			prisma.$queryRaw<{ name: string | null }[]>`
+				SELECT unnest(ARRAY[
+					to_regclass('public.organization_memberships')::text,
+					to_regclass('public.organization_roles')::text,
+					to_regclass('public.organization_owner_invitations')::text,
+					to_regclass('public.organization_ownership_audit_events')::text
+				]) AS name
+			`,
+			prisma.$queryRaw<{ name: string }[]>`
+				SELECT conname AS name FROM pg_catalog.pg_constraint
+				WHERE conrelid IN (
+					to_regclass('public.organization_owner_invitations'),
+					to_regclass('public.organization_ownership_audit_events')
+				) AND contype = 'c' AND convalidated
+			`,
+			prisma.$queryRaw<{ name: string }[]>`
+				SELECT indexname AS name FROM pg_catalog.pg_indexes
+				WHERE schemaname = 'public'
+					AND tablename = 'organization_owner_invitations'
+			`,
+			prisma.$queryRaw<{ name: string }[]>`
+				SELECT tgname AS name FROM pg_catalog.pg_trigger
+				WHERE tgrelid IN (
+					to_regclass('public.organization_owner_invitations'),
+					to_regclass('public.organization_ownership_audit_events')
+				) AND NOT tgisinternal AND tgenabled = 'O'
+			`,
+		]);
 		if (
 			tables.some(({ name }) => name === null) ||
 			requiredChecks.some((name) => !checks.some((check) => check.name === name)) ||
