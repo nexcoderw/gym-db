@@ -218,6 +218,37 @@ permissions allow the operation. Tenant context must never authorize access to t
 Production database privileges and service-level authorization must restrict these sensitive models
 to the platform authentication service even though the generated Prisma client exposes them.
 
+## Organization Portal session persistence
+
+`OwnerSession` is the separate server-side session boundary for the Organization Portal. It belongs
+to a global `User`, stores only a purpose-separated digest of an opaque cookie token, records AAL1 or
+AAL2 authentication assurance, and supports independent idle expiry, absolute expiry and revocation.
+It does not reference an Organization: session validity authenticates a person, while every tenant
+operation must separately re-check the current User status, Organization lifecycle, membership and
+organization-scoped roles. It must never reuse the Superadmin cookie or `PlatformAdminSession`.
+
+The human-generated `add_owner_sessions` migration must be reviewed before it is applied. In
+addition to the Prisma-generated table, enum, indexes and restrictive User foreign key, its SQL must:
+
+- require a lowercase 64-character hexadecimal token digest;
+- require authentication and optional MFA proof timestamps no later than session creation;
+- require AAL2 to have an MFA timestamp and AAL1 not to claim one;
+- order `created_at <= last_activity_at < idle_expires_at <= absolute_expires_at`;
+- cap absolute lifetime at 30 days and each idle window at 24 hours;
+- require revocation timestamps to be no earlier than creation;
+- protect session identity, authentication evidence and absolute expiry from updates;
+- permit only monotonic activity/idle-expiry movement, prevent any mutation after revocation, and
+  prevent revocation from being cleared or rewritten;
+- reject creation for a missing or non-active User;
+- revoke all PUBLIC table, sequence, function and enum privileges; and
+- grant the owner-auth runtime only the minimum `SELECT`, `INSERT` and narrowly required `UPDATE`
+  privileges, with cleanup handled by an explicitly reviewed maintenance role.
+
+Session cookies remain API concerns: HttpOnly, host-only, `Secure` outside local development,
+appropriate `SameSite`, independent CSRF protection, no parent-domain sharing, and no raw token in
+logs, responses, audit metadata or PostgreSQL. The API must check both expiries and current User
+status on every session use and perform logout as an atomic conditional revocation.
+
 ## Versioning and publication
 
 Use SemVer for the package. A backwards-compatible API/schema addition is normally minor; fixes are
@@ -2325,15 +2356,37 @@ database. Never grant them to `gym_app`, a delivery worker, `gym_dev`, or produc
 test URL uses a differently named restricted role, substitute that exact role after confirming it
 with `SELECT current_database(), current_user`; do not create a second competing test role.
 
-The human then generated
-`20261016164449_repair_owner_enrollment_acceptance_integrity` without applying it. That forward draft
-now contains the reviewed proof lifecycle, attempts, timestamp and digest checks; immutable,
-one-directional challenge enforcement; recipient/invitation/organization rechecks; database-stamped
-acceptance audit binding; PUBLIC revocations; and a focused source-level regression test. The already
-applied enrollment foundation and delivery repair remain immutable.
+The human generated and applied `20261016164449_repair_owner_enrollment_acceptance_integrity` to the
+marked disposable database, then supplied passing focused delivery and enrollment results. That
+forward migration contains the reviewed proof lifecycle, attempts, timestamp and digest checks;
+immutable, one-directional challenge enforcement; recipient/invitation/organization rechecks;
+database-stamped acceptance audit binding; and PUBLIC revocations. The earlier applied foundations
+remain immutable.
 
-After reviewing the SQL, apply it to `gym_test` first and verify both focused suites before any
-`gym_dev` deployment:
+The next human-generated draft, `20261016205745_add_owner_sessions`, establishes the separate global
+User session boundary described above. Its reviewed SQL now adds digest, assurance and bounded-time
+checks; rejects session creation and refresh for inactive Users; protects immutable authentication
+evidence; enforces monotonic activity refresh and one-way terminal revocation; and removes PUBLIC
+access. The migration intentionally contains no environment-specific role names.
+
+Apply it to `gym_test` first. Then, as `neondb_owner` with the Neon development branch and `gym_test`
+database selected, grant the disposable fixture role only the privileges needed by its tests:
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE
+ON TABLE public.owner_sessions
+TO gym_test;
+
+GRANT USAGE
+ON TYPE public.owner_session_assurance
+TO gym_test;
+```
+
+If `TEST_DATABASE_URL` uses another restricted role, replace `gym_test` with the exact `current_user`.
+Never apply these broad fixture cleanup grants to `gym_app`, `gym_dev` or production. Runtime owner
+authentication must receive a separate least-privilege review; it does not need DELETE or DDL.
+
+After the migration and disposable grants are reviewed, verify the database package:
 
 ```bash
 cd /Users/dvniels/Desktop/projects/gym/api/db
@@ -2342,18 +2395,25 @@ unset TEST_DATABASE_URL TEST_MIGRATION_DATABASE_URL TEST_DATABASE_MARKER
 
 npm run migration:test:deploy
 npm run prisma:generate
-npm run test:unit -- test/unit/owner-enrollment-acceptance-repair-migration.spec.ts
-npm run test:integration -- \
-  --testPathPattern='(organization-owner-invitation-delivery|owner-enrollment)\.integration'
+npm run format:check
+npm run lint
+npm run typecheck
+npm run test:unit -- \
+  test/unit/schema-contract.spec.ts \
+  test/unit/owner-session-migration.spec.ts
+npm run test:integration -- --testPathPattern=owner-session.integration
+npm run build
 ```
 
-Do not deploy this repair to `gym_dev`, add owner sessions, or begin dependent API/portal work until
-the disposable-database suites pass and the human confirms that checkpoint.
+Do not deploy the owner-session migration to `gym_dev`, regenerate a consumer package or begin the
+dependent owner-auth API until these disposable-database checks pass and the human confirms the
+checkpoint. Before production, separately review least-privilege role grants, rollout locks,
+monitoring, retention and cleanup.
 
 No migration, database connection, generation, formatter, lint, typecheck, tests, build, provider
 call, worker, server, deployment, package publication or Git write was executed by the agent. The
-human generated both repair drafts and supplied the migration output; their SQL and focused
-source-level regression tests were then authored for review. Deployment remains human-controlled.
+human generated the migration drafts and supplied their output; reviewed SQL and focused tests were
+then authored for review. Owner-session deployment and all downstream work remain human-controlled.
 
 ## Engineering rules
 
