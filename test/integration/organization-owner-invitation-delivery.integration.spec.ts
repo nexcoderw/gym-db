@@ -382,7 +382,9 @@ describe('organization owner invitation delivery foundation', () => {
 				AND status = 'queued'
 		`;
 		await new Promise<void>((resolve) => setTimeout(resolve, 100));
-		const now = new Date();
+		const [clock] = await prisma.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AS now`;
+		if (clock === undefined) throw new Error('Database clock is unavailable.');
+		const now = clock.now;
 
 		await expect(
 			prisma.organizationOwnerInvitationDelivery.update({
@@ -660,21 +662,42 @@ describe('organization owner invitation delivery foundation', () => {
 		const otherOrganizationId = await createOrganization('Kicukiro Training');
 		const otherActorId = await createActor();
 		const otherInvitationId = await createInvitation(organizationId, actorId);
-		const changes: readonly Prisma.OrganizationOwnerInvitationDeliveryUncheckedUpdateInput[] = [
-			{ id: deliveries.reserveDeliveryId(requireVerified()) },
-			{ organizationId: otherOrganizationId },
-			{ ownerInvitationId: otherInvitationId },
-			{ requestedByPlatformStaffId: otherActorId },
-			{ providerIdempotencyKey: `changed:${delivery.id}` },
-			{ tokenDigest: 'f'.repeat(64) },
-			{ tokenCiphertext: Buffer.alloc(43, 9) },
-			{ tokenExpiresAt: new Date(Date.now() + 60_000) },
-			{ maxAttempts: 4 },
+		const changes: readonly {
+			data: Prisma.OrganizationOwnerInvitationDeliveryUncheckedUpdateInput;
+			rejection: string;
+		}[] = [
+			{
+				data: { id: deliveries.reserveDeliveryId(requireVerified()) },
+				rejection: 'immutable delivery reservation',
+			},
+			{
+				data: { organizationId: otherOrganizationId },
+				rejection: 'immutable delivery parent',
+			},
+			{ data: { ownerInvitationId: otherInvitationId }, rejection: 'immutable delivery reservation' },
+			{
+				data: { requestedByPlatformStaffId: otherActorId },
+				rejection: 'immutable delivery reservation',
+			},
+			{
+				data: { providerIdempotencyKey: `changed:${delivery.id}` },
+				rejection: 'immutable delivery reservation',
+			},
+			{ data: { tokenDigest: 'f'.repeat(64) }, rejection: 'immutable delivery reservation' },
+			{
+				data: { tokenCiphertext: Buffer.alloc(43, 9) },
+				rejection: 'immutable delivery reservation',
+			},
+			{
+				data: { tokenExpiresAt: new Date(Date.now() + 60_000) },
+				rejection: 'immutable delivery reservation',
+			},
+			{ data: { maxAttempts: 4 }, rejection: 'immutable delivery reservation' },
 		];
-		for (const data of changes) {
+		for (const { data, rejection } of changes) {
 			await expect(
 				prisma.organizationOwnerInvitationDelivery.update({ where: { id: delivery.id }, data }),
-			).rejects.toThrow('immutable delivery reservation');
+			).rejects.toThrow(rejection);
 		}
 	});
 
@@ -809,7 +832,7 @@ describe('organization owner invitation delivery foundation', () => {
 				where: { id: invitationId },
 				data: { status: OrganizationOwnerInvitationStatus.PENDING_DELIVERY, revokedAt: null },
 			}),
-		).rejects.toThrow('organization_owner_invitation_identity_guard');
+		).rejects.toThrow('invalid invitation identity or lifecycle change');
 		await prisma.organizationOwnerInvitationDelivery.update({
 			where: { id: delivery.id },
 			data: {
