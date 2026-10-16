@@ -205,9 +205,7 @@ describe('integration-test database safety', () => {
 					privileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
 				},
 			]),
-		).rejects.toThrow(
-			'missing SELECT,INSERT,UPDATE,DELETE on public.organization_roles',
-		);
+		).rejects.toThrow('missing SELECT,INSERT,UPDATE,DELETE on public.organization_roles');
 		expect(queryRaw).toHaveBeenCalledTimes(1);
 	});
 });
