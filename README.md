@@ -2295,10 +2295,65 @@ membership, OWNER assignment, tenant session, frontend or Step 22 work is includ
 sources exist, a fixed acceptance origin is not evidence of an implemented/reviewed acceptance page;
 delivery stays disabled until the actual destination and token handoff are independently approved.
 
+### Step 22 database checkpoint
+
+The human-applied delivery repair is now recorded in both `gym_test` and `gym_dev`. The repeated
+delivery integration failures reported after deployment were one disposable-test-role prerequisite:
+the restricted `gym_test` role could not exercise the newly protected delivery table. They were not
+27 independent migration failures. On the Neon **development** branch with database `gym_test`
+selected, an owner/migrator may provision only the disposable test role with:
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE
+ON TABLE
+  public.organization_owner_invitation_deliveries,
+  public.organization_owner_enrollment_challenges,
+  public.organization_owner_acceptance_audit_events
+TO gym_test;
+
+GRANT USAGE
+ON TYPE
+  public.organization_owner_invitation_delivery_status,
+  public.organization_owner_enrollment_purpose,
+  public.organization_owner_enrollment_status,
+  public.organization_owner_acceptance_audit_action
+TO gym_test;
+```
+
+Those broad mutation privileges exist solely for fixture setup and cleanup in the marked disposable
+database. Never grant them to `gym_app`, a delivery worker, `gym_dev`, or production. If the verified
+test URL uses a differently named restricted role, substitute that exact role after confirming it
+with `SELECT current_database(), current_user`; do not create a second competing test role.
+
+The human then generated
+`20261016164449_repair_owner_enrollment_acceptance_integrity` without applying it. That forward draft
+now contains the reviewed proof lifecycle, attempts, timestamp and digest checks; immutable,
+one-directional challenge enforcement; recipient/invitation/organization rechecks; database-stamped
+acceptance audit binding; PUBLIC revocations; and a focused source-level regression test. The already
+applied enrollment foundation and delivery repair remain immutable.
+
+After reviewing the SQL, apply it to `gym_test` first and verify both focused suites before any
+`gym_dev` deployment:
+
+```bash
+cd /Users/dvniels/Desktop/projects/gym/api/db
+unset DATABASE_URL DIRECT_DATABASE_URL SHADOW_DATABASE_URL
+unset TEST_DATABASE_URL TEST_MIGRATION_DATABASE_URL TEST_DATABASE_MARKER
+
+npm run migration:test:deploy
+npm run prisma:generate
+npm run test:unit -- test/unit/owner-enrollment-acceptance-repair-migration.spec.ts
+npm run test:integration -- \
+  --testPathPattern='(organization-owner-invitation-delivery|owner-enrollment)\.integration'
+```
+
+Do not deploy this repair to `gym_dev`, add owner sessions, or begin dependent API/portal work until
+the disposable-database suites pass and the human confirms that checkpoint.
+
 No migration, database connection, generation, formatter, lint, typecheck, tests, build, provider
 call, worker, server, deployment, package publication or Git write was executed by the agent. The
-human generated the delivery-repair draft and supplied the migration output; its SQL and focused
-source-level regression test were then authored for review. Deployment remains human-controlled.
+human generated both repair drafts and supplied the migration output; their SQL and focused
+source-level regression tests were then authored for review. Deployment remains human-controlled.
 
 ## Engineering rules
 
