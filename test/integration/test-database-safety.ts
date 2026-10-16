@@ -251,22 +251,39 @@ export async function verifyTestTablePrivileges(
 	prisma: PrismaService,
 	requirements: readonly TestTablePrivilegeRequirement[],
 ): Promise<void> {
-	for (const requirement of requirements) {
-		const qualifiedTableName = `public.${requirement.tableName}`;
-		const requestedPrivileges = requirement.privileges.join(',');
-		const rows = await prisma.$queryRaw<{ allowed: boolean }[]>`
-			SELECT has_table_privilege(
-				current_user,
-				${qualifiedTableName},
-				${requestedPrivileges}
-			) AS allowed
-		`;
+	if (requirements.length === 0) return;
 
-		if (rows.length !== 1 || rows[0]?.allowed !== true) {
-			throw new Error(
-				`The restricted integration-test role is missing ${requestedPrivileges} on ` +
-					`${qualifiedTableName}. Apply the reviewed gym_test-only grants before running tests.`,
-			);
-		}
+	const serializedRequirements = JSON.stringify(
+		requirements.map(({ tableName, privileges }) => ({
+			table_name: tableName,
+			privileges: privileges.join(','),
+		})),
+	);
+	const rows = await prisma.$queryRaw<
+		{ table_name: string; privileges: string; allowed: boolean }[]
+	>`
+		SELECT
+			requirement.table_name,
+			requirement.privileges,
+			has_table_privilege(
+				current_user,
+				format('%I.%I', 'public', requirement.table_name),
+				requirement.privileges
+			) AS allowed
+		FROM jsonb_to_recordset(${serializedRequirements}::jsonb) AS requirement(
+			table_name text,
+			privileges text
+		)
+	`;
+	const denied = rows.find(({ allowed }) => !allowed);
+	if (rows.length !== requirements.length || denied !== undefined) {
+		const missing = denied ?? {
+			table_name: requirements[0]?.tableName ?? 'unknown',
+			privileges: requirements[0]?.privileges.join(',') ?? 'unknown',
+		};
+		throw new Error(
+			`The restricted integration-test role is missing ${missing.privileges} on ` +
+				`public.${missing.table_name}. Apply the reviewed gym_test-only grants before running tests.`,
+		);
 	}
 }
