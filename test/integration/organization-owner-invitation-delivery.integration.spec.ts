@@ -84,24 +84,39 @@ describe('organization owner invitation delivery foundation', () => {
 			WHERE conrelid = to_regclass('public.organization_ownership_audit_events')
 				AND conname = 'organization_ownership_audit_events_metadata_check' AND convalidated
 		`;
-		if (
-			table?.name === null ||
-			table === undefined ||
-			requiredChecks.some((name) => !checks.some((check) => check.name === name)) ||
-			!checks.some((check) => check.name === 'organization_owner_invitation_deliveries_token_material_check' && check.definition.includes('4096')) ||
-			!triggers.some(({ name }) => name === 'owner_invitation_delivery_guard') ||
-			!auditCheck?.definition.includes('invitation_delivery_queued') ||
-			!indexes.some(
-				({ name }) => name === 'owner_invitation_deliveries_org_invitation_key',
-			) ||
-			!indexes.some(
-				({ name }) => name === 'organization_owner_invitation_deliveries_worker_claim_idx',
-			)
-		) {
+		const missing: string[] = [];
+		if (table === undefined || table.name === null) {
+			missing.push('table public.organization_owner_invitation_deliveries');
+		}
+		missing.push(
+			...requiredChecks
+				.filter((name) => !checks.some((check) => check.name === name))
+				.map((name) => `validated check ${name}`),
+		);
+		const tokenCheck = checks.find(
+			({ name }) => name === 'organization_owner_invitation_deliveries_token_material_check',
+		);
+		if (tokenCheck !== undefined && !tokenCheck.definition.includes('4096')) {
+			missing.push('reviewed 4096-byte ciphertext bound');
+		}
+		if (!triggers.some(({ name }) => name === 'owner_invitation_delivery_guard')) {
+			missing.push('enabled trigger owner_invitation_delivery_guard');
+		}
+		if (!auditCheck?.definition.includes('invitation_delivery_queued')) {
+			missing.push('validated ownership-audit metadata for invitation_delivery_queued');
+		}
+		for (const name of [
+			'owner_invitation_deliveries_org_invitation_key',
+			'organization_owner_invitation_deliveries_worker_claim_idx',
+		]) {
+			if (!indexes.some((index) => index.name === name)) missing.push(`index ${name}`);
+		}
+		if (missing.length > 0) {
 			throw new Error(
-				'Owner invitation delivery prerequisites are missing: review and apply the Step 21 ' +
-					'forward repair, six validated checks, transition guard, queue-audit metadata and ' +
-					'disposable-test grants before integration tests. Do not rewrite the foundation.',
+				`Owner invitation delivery prerequisites are missing: ${missing.join('; ')}. ` +
+					'Review and apply the Step 21 forward repair and disposable-test grants before ' +
+					'integration tests. Migration status alone does not prove these protections exist; ' +
+					'do not rewrite the foundation or bypass this preflight.',
 			);
 		}
 		await verifyTestTablePrivileges(prisma, [
@@ -136,7 +151,8 @@ describe('organization owner invitation delivery foundation', () => {
 	});
 
 	function requireVerified(): VerifiedTestDatabase {
-		if (verified === undefined) throw new Error('Invitation delivery test database is not verified.');
+		if (verified === undefined)
+			throw new Error('Invitation delivery test database is not verified.');
 		return verified;
 	}
 
@@ -1028,9 +1044,7 @@ describe('organization owner invitation delivery foundation', () => {
 				...deliveryData(sentinelOrganizationId, sentinelInvitationId, actorId),
 				id: sentinelId,
 				providerIdempotencyKey: `owner-invitation-delivery:${sentinelId}`,
-				tokenDigest: createHash('sha256')
-					.update(`fictional-token:${sentinelId}`)
-					.digest('hex'),
+				tokenDigest: createHash('sha256').update(`fictional-token:${sentinelId}`).digest('hex'),
 			},
 		});
 
