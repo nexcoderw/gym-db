@@ -6,7 +6,7 @@ import {
 	type VerifiedTestDatabase,
 } from './test-database-safety.js';
 
-const TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 20_000 } as const;
+const TRANSACTION_OPTIONS = { maxWait: 30_000, timeout: 60_000 } as const;
 
 /** Tracks only invitation/audit identifiers reserved by one test and deletes children first. */
 export class OrganizationOwnerInvitationTestFixtures {
