@@ -28,12 +28,14 @@ describe('owner enrollment and acceptance integrity repair migration', () => {
 		}
 
 		expect(source).toContain("expires_at <= created_at + interval '15 minutes'");
-		expect(source).toContain("request_id COLLATE \"C\" ~ '^[A-Za-z0-9._:-]{1,128}$'");
+		expect(source).toContain('request_id COLLATE "C" ~ \'^[A-Za-z0-9._:-]{1,128}$\'');
 	});
 
 	it('enforces proof identity, monotonic attempts and one-way terminal states', async () => {
 		const source = await migration();
-		expect(source).toContain('CREATE OR REPLACE FUNCTION public.guard_owner_enrollment_challenge()');
+		expect(source).toContain(
+			'CREATE OR REPLACE FUNCTION public.guard_owner_enrollment_challenge()',
+		);
 		expect(source).toContain('SECURITY INVOKER');
 		expect(source).toContain('SET search_path = pg_catalog, public');
 		expect(source).toContain('CREATE TRIGGER owner_enrollment_challenge_guard');
