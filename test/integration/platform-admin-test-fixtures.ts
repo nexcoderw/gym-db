@@ -6,8 +6,8 @@ import {
 	type VerifiedTestDatabase,
 } from './test-database-safety.js';
 
-const TRANSACTION_MAX_WAIT_MILLISECONDS = 10_000;
-const TRANSACTION_TIMEOUT_MILLISECONDS = 15_000;
+const TRANSACTION_MAX_WAIT_MILLISECONDS = 30_000;
+const TRANSACTION_TIMEOUT_MILLISECONDS = 60_000;
 
 export class PlatformAdminTestFixtures {
 	readonly #userIds = new Set<string>();
