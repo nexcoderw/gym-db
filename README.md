@@ -1760,6 +1760,74 @@ verified. After that checkpoint, the API human checks are `npm run format:check`
 `npm run typecheck`, `npm run test:unit`, `npm run test:integration`, `npm run test:e2e` and
 `npm run build` from `api/api` with its compatible database package. Do not start Step 20 here.
 
+## Diagnosing enrollment and delivery integration prerequisites
+
+If all cases in these two suites fail at their `beforeAll` prerequisite check, they have not reached
+the behavior being tested. Do not interpret 39 failed cases as 39 independent persistence defects,
+remove the checks, skip the suites, or grant broad privileges to make setup pass. The preflight now
+lists the exact missing tables, validated CHECKs, enabled triggers and delivery metadata/indexes.
+Triggers enabled for ordinary requests (`O`) or always (`A`) are accepted; disabled triggers are not.
+
+The committed `20261015233646_owner_invitation_delivery_foundation` and
+`20261015235222_owner_enrollment_acceptance_foundation` files create structural objects but do not
+contain the required delivery/enrollment CHECKs and guards. Consequently, **a successful deploy or
+“no pending migrations” result is not proof that these security prerequisites exist**. The Step 19
+integrity contract and Step 21 forward repair still need independent SQL review. Do not rewrite
+either foundation, silently apply pending migrations through create-only, or deploy an empty repair.
+
+First verify `.env.migrations.local` points to the approved development/shadow databases and that
+`TEST_MIGRATION_DATABASE_URL` targets the same independently marked disposable database as
+`TEST_DATABASE_URL` in `.env.test.local`. Never share either URL or its password in diagnostics.
+The human can inspect both histories without changing either database:
+
+```bash
+cd /Users/dvniels/Desktop/projects/gym/api/db
+(
+  unset DATABASE_URL DIRECT_DATABASE_URL SHADOW_DATABASE_URL
+  unset TEST_DATABASE_URL TEST_MIGRATION_DATABASE_URL TEST_DATABASE_MARKER
+  npm run migration:status
+  npm run migration:status -- --config prisma.test.config.ts
+)
+```
+
+In Neon select **development / gym_test** (or the independently approved disposable target actually
+used by the test URL), then run this read-only catalog inspection. It contains no credentials or
+recipient records. Compare its objects with the preflight's named requirements:
+
+```sql
+SELECT current_database() AS database_name, current_user AS connected_role;
+
+WITH expected(table_name) AS (VALUES
+  ('organization_owner_invitation_deliveries'),
+  ('organization_ownership_audit_events'),
+  ('organization_owner_enrollment_challenges'),
+  ('organization_owner_acceptance_audit_events')
+)
+SELECT
+  expected.table_name,
+  to_regclass('public.' || expected.table_name) IS NOT NULL AS table_exists,
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object('name', c.conname, 'validated', c.convalidated)
+      ORDER BY c.conname)
+    FROM pg_catalog.pg_constraint c
+    WHERE c.conrelid = to_regclass('public.' || expected.table_name) AND c.contype = 'c'
+  ), '[]'::jsonb) AS checks,
+  COALESCE((
+    SELECT jsonb_agg(jsonb_build_object('name', t.tgname, 'enabled', t.tgenabled)
+      ORDER BY t.tgname)
+    FROM pg_catalog.pg_trigger t
+    WHERE t.tgrelid = to_regclass('public.' || expected.table_name) AND NOT t.tgisinternal
+  ), '[]'::jsonb) AS triggers
+FROM expected
+ORDER BY expected.table_name;
+```
+
+Review the resulting history and actual catalog before deciding whether structural migrations are
+pending or forward hardening is missing. Missing CHECKs/guards require approved forward SQL, not
+Prisma Client regeneration, new test credentials or more permissions. After the SQL checkpoint and
+disposable deployment, review the fixture-scoped test grants separately and rerun integration tests.
+Delivery remains disabled and owner acceptance remains unavailable until their release gates pass.
+
 ## Step 21: forward delivery-integrity repair (SQL review checkpoint)
 
 Inspected repository heads: gym-db `6bd4e1b` and gym-api `4bb4ccf`, both on `main`. The API still has
