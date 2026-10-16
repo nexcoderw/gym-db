@@ -279,19 +279,19 @@ describe('organization owner invitation and ownership audit foundation', () => {
 				where: { id: data.id },
 				data: { invitedEmail: 'different@example.com' },
 			}),
-		).rejects.toThrow('organization owner invitation identity is immutable');
+		).rejects.toThrow('invalid invitation identity or lifecycle change');
 		await expect(
 			prisma.organizationOwnerInvitation.update({
 				where: { id: data.id },
 				data: { organizationId: otherOrganizationId },
 			}),
-		).rejects.toThrow('organization owner invitation identity is immutable');
+		).rejects.toThrow('invalid invitation identity or lifecycle change');
 		await expect(
 			prisma.organizationOwnerInvitation.update({
 				where: { id: data.id },
 				data: { invitedByPlatformStaffId: otherActorId },
 			}),
-		).rejects.toThrow('organization owner invitation identity is immutable');
+		).rejects.toThrow('invalid invitation identity or lifecycle change');
 	});
 
 	it('uses citext plus enforced lowercase normalization for recipient identity', async () => {
