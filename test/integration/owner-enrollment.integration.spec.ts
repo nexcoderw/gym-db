@@ -56,16 +56,23 @@ describe('owner enrollment proof and recipient acceptance audit foundation', () 
 
 	beforeAll(async () => {
 		module = await Test.createTestingModule({
-			imports: [DatabaseModule.forRoot({ databaseUrl: safety.databaseUrl, poolMax: 3 })],
+			imports: [
+				DatabaseModule.forRoot({
+					databaseUrl: safety.databaseUrl,
+					poolMax: 3,
+					connectionTimeoutMilliseconds: 10_000,
+				}),
+			],
 		}).compile();
 		await module.init();
 		prisma = module.get(PrismaService);
 		const safe = await verifyTestDatabaseSafety(prisma, safety);
-		const tables = await prisma.$queryRaw<{ name: string | null }[]>`
-			SELECT unnest(ARRAY[
-				to_regclass('public.organization_owner_enrollment_challenges')::text,
-				to_regclass('public.organization_owner_acceptance_audit_events')::text
-			]) AS name
+		const tables = await prisma.$queryRaw<{ name: string; relation: string | null }[]>`
+			SELECT expected.name, to_regclass(expected.name)::text AS relation
+			FROM (VALUES
+				('public.organization_owner_enrollment_challenges'),
+				('public.organization_owner_acceptance_audit_events')
+			) AS expected(name)
 		`;
 		const checks = await prisma.$queryRaw<{ name: string }[]>`
 			SELECT conname AS name FROM pg_catalog.pg_constraint
@@ -79,16 +86,25 @@ describe('owner enrollment proof and recipient acceptance audit foundation', () 
 			WHERE tgrelid IN (
 				to_regclass('public.organization_owner_enrollment_challenges'),
 				to_regclass('public.organization_owner_acceptance_audit_events')
-			) AND NOT tgisinternal AND tgenabled = 'O'
+			) AND NOT tgisinternal AND tgenabled IN ('O', 'A')
 		`;
-		if (
-			tables.some(({ name }) => name === null) ||
-			requiredChecks.some((name) => !checks.some((check) => check.name === name)) ||
-			requiredTriggers.some((name) => !triggers.some((trigger) => trigger.name === name))
-		) {
+		const missing = [
+			...tables
+				.filter(({ relation }) => relation === null)
+				.map(({ name }) => `table ${name}`),
+			...requiredChecks
+				.filter((name) => !checks.some((check) => check.name === name))
+				.map((name) => `validated check ${name}`),
+			...requiredTriggers
+				.filter((name) => !triggers.some((trigger) => trigger.name === name))
+				.map((name) => `enabled trigger ${name}`),
+		];
+		if (missing.length > 0) {
 			throw new Error(
-				'Owner enrollment prerequisites are missing: apply the reviewed Step 19 migration, ' +
-					'validated checks and guards to the independently verified disposable database.',
+				`Owner enrollment prerequisites are missing: ${missing.join('; ')}. ` +
+					'Review the Step 19 foundation and forward hardening on the independently verified ' +
+					'disposable database. Migration status alone does not prove these protections exist; ' +
+					'do not rewrite an applied foundation or bypass this preflight.',
 			);
 		}
 		await verifyTestTablePrivileges(
@@ -236,13 +252,17 @@ describe('owner enrollment proof and recipient acceptance audit foundation', () 
 			failedAttempts: 0,
 		});
 		expect(
-			await prisma.organizationMembership.count({ where: { organizationId: context.organizationId } }),
+			await prisma.organizationMembership.count({
+				where: { organizationId: context.organizationId },
+			}),
 		).toBe(0);
 		expect(
 			await prisma.organizationRole.count({ where: { organizationId: context.organizationId } }),
 		).toBe(0);
 		expect(
-			await prisma.platformAdminSession.count({ where: { platformStaff: { userId: context.userId } } }),
+			await prisma.platformAdminSession.count({
+				where: { platformStaff: { userId: context.userId } },
+			}),
 		).toBe(0);
 	});
 
@@ -469,7 +489,9 @@ describe('owner enrollment proof and recipient acceptance audit foundation', () 
 		]);
 		expect(outcomes.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
 		expect(
-			await prisma.organizationMembership.count({ where: { organizationId: context.organizationId } }),
+			await prisma.organizationMembership.count({
+				where: { organizationId: context.organizationId },
+			}),
 		).toBe(1);
 		expect(
 			await prisma.organizationOwnerAcceptanceAuditEvent.count({
@@ -481,9 +503,13 @@ describe('owner enrollment proof and recipient acceptance audit foundation', () 
 	it('rolls back membership, owner assignment and proof consumption when auditing fails', async () => {
 		const context = await createContext();
 		const challengeId = await verifiedChallenge(context);
-		await expect(acceptanceTransaction(context, challengeId, 'unsafe request id')).rejects.toThrow();
+		await expect(
+			acceptanceTransaction(context, challengeId, 'unsafe request id'),
+		).rejects.toThrow();
 		expect(
-			await prisma.organizationMembership.count({ where: { organizationId: context.organizationId } }),
+			await prisma.organizationMembership.count({
+				where: { organizationId: context.organizationId },
+			}),
 		).toBe(0);
 		expect(
 			await prisma.organizationRole.count({ where: { organizationId: context.organizationId } }),
@@ -544,7 +570,9 @@ describe('owner enrollment proof and recipient acceptance audit foundation', () 
 		});
 		await expect(acceptanceTransaction(context, challengeId)).rejects.toThrow();
 		expect(
-			await prisma.organizationMembership.count({ where: { organizationId: context.organizationId } }),
+			await prisma.organizationMembership.count({
+				where: { organizationId: context.organizationId },
+			}),
 		).toBe(0);
 	});
 
@@ -572,13 +600,13 @@ describe('owner enrollment proof and recipient acceptance audit foundation', () 
 		const memberCount = await prisma.organizationMembership.count({
 			where: { organizationId: context.organizationId },
 		});
-		if (acceptance?.status === 'fulfilled') {
+		if (acceptance.status === 'fulfilled') {
 			expect(invitation.status).toBe(OrganizationOwnerInvitationStatus.ACCEPTED);
 			expect(audits).toBe(1);
 			expect(memberCount).toBe(1);
-			if (revocation?.status === 'fulfilled') expect(revocation.value.count).toBe(0);
+			if (revocation.status === 'fulfilled') expect(revocation.value.count).toBe(0);
 		} else {
-			expect(revocation?.status).toBe('fulfilled');
+			expect(revocation.status).toBe('fulfilled');
 			expect(invitation.status).toBe(OrganizationOwnerInvitationStatus.REVOKED);
 			expect(audits).toBe(0);
 			expect(memberCount).toBe(0);
