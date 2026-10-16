@@ -34,7 +34,7 @@ describe('owner session migration', () => {
 			expect(source).toContain(`CONSTRAINT "${constraint}"`);
 		}
 
-		expect(source).toContain("token_digest COLLATE \"C\" ~ '^[0-9a-f]{64}$'");
+		expect(source).toContain('token_digest COLLATE "C" ~ \'^[0-9a-f]{64}$\'');
 		expect(source).toContain("absolute_expires_at <= created_at + interval '30 days'");
 		expect(source).toContain("idle_expires_at <= last_activity_at + interval '24 hours'");
 		expect(source).toContain("WHEN 'aal2' THEN mfa_verified_at IS NOT NULL");
@@ -57,12 +57,8 @@ describe('owner session migration', () => {
 		const source = await migration();
 
 		expect(source).toContain('REVOKE ALL ON TABLE public.owner_sessions FROM PUBLIC;');
-		expect(source).toContain(
-			'REVOKE ALL ON TYPE public.owner_session_assurance FROM PUBLIC;',
-		);
-		expect(source).toContain(
-			'REVOKE ALL ON FUNCTION public.guard_owner_session() FROM PUBLIC;',
-		);
+		expect(source).toContain('REVOKE ALL ON TYPE public.owner_session_assurance FROM PUBLIC;');
+		expect(source).toContain('REVOKE ALL ON FUNCTION public.guard_owner_session() FROM PUBLIC;');
 		expect(source).not.toMatch(/\bGRANT\b/u);
 	});
 });
