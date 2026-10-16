@@ -1886,8 +1886,16 @@ npm run migration:create -- --name repair_owner_invitation_delivery_integrity
 
 **Stop after generation and review its actual file.** SQL-only additions can produce an empty draft
 or no draft; if no file is produced, report that result instead of inventing a timestamped directory.
-The SQL below is a review proposal, not an applied or approved migration. Once the human-generated
-draft exists, place this proposal into that draft and review the complete SQL before any deployment.
+
+On 2026-10-16, the human-generated draft
+`20261016163359_repair_owner_invitation_delivery_integrity` was created and populated from the
+reviewed proposal below. It remains an unapplied review artifact until a human verifies its exact
+target, SQL and grants and deploys it to an independently marked disposable database. The same human
+command applied `20261015235222_owner_enrollment_acceptance_foundation` to `gym_dev`; preserve that
+foundation checksum and do not treat its deployment as proof that its documented hardening exists.
+
+The SQL below remains the review contract for that unapplied draft. Review the complete generated
+migration before any deployment.
 If existing rows violate these checks, validation must fail and roll back. Do not weaken constraints
 or mutate/delete historical delivery data automatically to make deployment pass.
 
@@ -2287,10 +2295,10 @@ membership, OWNER assignment, tenant session, frontend or Step 22 work is includ
 sources exist, a fixed acceptance origin is not evidence of an implemented/reviewed acceptance page;
 delivery stays disabled until the actual destination and token handoff are independently approved.
 
-No migration, database connection, generation, formatter, lint, typecheck, tests, build, provider call,
-worker, server, deployment, package publication or Git write was executed by the agent. Existing SQL
-and the Prisma schema are preserved; only this review proposal and focused integration expectations
-are authored before the human-generated migration checkpoint.
+No migration, database connection, generation, formatter, lint, typecheck, tests, build, provider
+call, worker, server, deployment, package publication or Git write was executed by the agent. The
+human generated the delivery-repair draft and supplied the migration output; its SQL and focused
+source-level regression test were then authored for review. Deployment remains human-controlled.
 
 ## Engineering rules
 
