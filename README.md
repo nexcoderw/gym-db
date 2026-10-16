@@ -2405,15 +2405,26 @@ npm run test:integration -- --testPathPattern=owner-session.integration
 npm run build
 ```
 
-Do not deploy the owner-session migration to `gym_dev`, regenerate a consumer package or begin the
-dependent owner-auth API until these disposable-database checks pass and the human confirms the
-checkpoint. Before production, separately review least-privilege role grants, rollout locks,
-monitoring, retention and cleanup.
+The human supplied a passing disposable checkpoint: migration deploy, Prisma generation, formatting,
+lint, typecheck, focused unit tests, owner-session PostgreSQL integration tests and build all passed.
+That result approves review of dependent source; it does not deploy `gym_dev` or grant runtime access.
+
+Before starting the API, deploy the reviewed migration to `gym_dev`, then review a least-privilege
+runtime grant for the actual API role. Owner authentication needs SELECT/INSERT/UPDATE (never DELETE,
+TRUNCATE, TRIGGER or ownership) on `owner_sessions` and enrollment challenges; append-only INSERT on
+owner acceptance audit; scoped reads of users, password credentials, organizations, invitations,
+memberships, roles and assignments; and only the specific INSERT/UPDATE columns used by acceptance.
+Registration additionally needs INSERT on users/password credentials. Grant USAGE on the owner
+session/enrollment/invitation/membership status enums. Verify inherited and PUBLIC ACLs independently.
+Do not copy broad disposable `gym_test` grants into runtime.
+
+Before production, separately review least-privilege role grants, rollout locks, monitoring,
+retention and cleanup.
 
 No migration, database connection, generation, formatter, lint, typecheck, tests, build, provider
 call, worker, server, deployment, package publication or Git write was executed by the agent. The
 human generated the migration drafts and supplied their output; reviewed SQL and focused tests were
-then authored for review. Owner-session deployment and all downstream work remain human-controlled.
+then authored for review. Owner-session deployment to development/production remains human-controlled.
 
 ## Engineering rules
 
