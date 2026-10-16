@@ -64,8 +64,8 @@ describe('organization owner invitation delivery foundation', () => {
 		const [table] = await prisma.$queryRaw<{ name: string | null }[]>`
 			SELECT to_regclass('public.organization_owner_invitation_deliveries')::text AS name
 		`;
-		const checks = await prisma.$queryRaw<{ name: string }[]>`
-			SELECT conname AS name FROM pg_catalog.pg_constraint
+		const checks = await prisma.$queryRaw<{ name: string; definition: string }[]>`
+			SELECT conname AS name, pg_get_constraintdef(oid) AS definition FROM pg_catalog.pg_constraint
 			WHERE conrelid = to_regclass('public.organization_owner_invitation_deliveries')
 				AND contype = 'c' AND convalidated
 		`;
@@ -88,6 +88,7 @@ describe('organization owner invitation delivery foundation', () => {
 			table?.name === null ||
 			table === undefined ||
 			requiredChecks.some((name) => !checks.some((check) => check.name === name)) ||
+			!checks.some((check) => check.name === 'organization_owner_invitation_deliveries_token_material_check' && check.definition.includes('4096')) ||
 			!triggers.some(({ name }) => name === 'owner_invitation_delivery_guard') ||
 			!auditCheck?.definition.includes('invitation_delivery_queued') ||
 			!indexes.some(
@@ -621,6 +622,19 @@ describe('organization owner invitation delivery foundation', () => {
 		).toBeNull();
 	});
 
+	it('accepts the reviewed maximum encrypted email snapshot without widening IV or tag bounds', async () => {
+		const organizationId = await createOrganization();
+		const actorId = await createActor();
+		const invitationId = await createInvitation(organizationId, actorId);
+		const data = deliveryData(organizationId, invitationId, actorId);
+		const row = await prisma.organizationOwnerInvitationDelivery.create({
+			data: { ...data, tokenCiphertext: new Uint8Array(4096) },
+		});
+		expect(row.tokenCiphertext?.byteLength).toBe(4096);
+		expect(row.tokenInitializationVector?.byteLength).toBe(12);
+		expect(row.tokenAuthenticationTag?.byteLength).toBe(16);
+	});
+
 	it('keeps reservation identity, crypto and retry policy immutable', async () => {
 		const organizationId = await createOrganization();
 		const actorId = await createActor();
@@ -651,7 +665,7 @@ describe('organization owner invitation delivery foundation', () => {
 	it.each([
 		{ tokenInitializationVector: Buffer.alloc(11) },
 		{ tokenAuthenticationTag: Buffer.alloc(15) },
-		{ tokenCiphertext: Buffer.alloc(513) },
+		{ tokenCiphertext: Buffer.alloc(4097) },
 		{ tokenEncryptionVersion: 2 },
 		{ tokenEncryptionKeyId: 'not a key id' },
 		{ tokenDigest: 'not-a-hmac' },
