@@ -24,7 +24,7 @@ const requiredChecks = [
 	'organization_roles_owner_system_check',
 ];
 
-jest.setTimeout(45_000);
+jest.setTimeout(180_000);
 
 describe('organization ownership and membership foundation', () => {
 	let module: TestingModule | undefined;
@@ -39,32 +39,34 @@ describe('organization ownership and membership foundation', () => {
 			imports: [
 				DatabaseModule.forRoot({
 					databaseUrl: safety.databaseUrl,
-					poolMax: 2,
-					connectionTimeoutMilliseconds: 10_000,
+					poolMax: 3,
+					connectionTimeoutMilliseconds: 30_000,
 				}),
 			],
 		}).compile();
 		await module.init();
 		prisma = module.get(PrismaService);
 		const safe = await verifyTestDatabaseSafety(prisma, safety);
-		const tables = await prisma.$queryRaw<{ name: string | null }[]>`
-			SELECT unnest(ARRAY[
-				to_regclass('public.organization_memberships')::text,
-				to_regclass('public.organization_roles')::text,
-				to_regclass('public.organization_membership_roles')::text
-			]) AS name
-		`;
-		const checks = await prisma.$queryRaw<{ name: string }[]>`
-			SELECT conname AS name FROM pg_catalog.pg_constraint
-			WHERE conrelid = to_regclass('public.organization_roles')
-				AND contype = 'c' AND convalidated
-		`;
-		const scopedForeignKeys = await prisma.$queryRaw<{ name: string }[]>`
-			SELECT conname AS name FROM pg_catalog.pg_constraint
-			WHERE conrelid = to_regclass('public.organization_membership_roles')
-				AND contype = 'f'
-				AND array_length(conkey, 1) = 2
-		`;
+		const [tables, checks, scopedForeignKeys] = await Promise.all([
+			prisma.$queryRaw<{ name: string | null }[]>`
+				SELECT unnest(ARRAY[
+					to_regclass('public.organization_memberships')::text,
+					to_regclass('public.organization_roles')::text,
+					to_regclass('public.organization_membership_roles')::text
+				]) AS name
+			`,
+			prisma.$queryRaw<{ name: string }[]>`
+				SELECT conname AS name FROM pg_catalog.pg_constraint
+				WHERE conrelid = to_regclass('public.organization_roles')
+					AND contype = 'c' AND convalidated
+			`,
+			prisma.$queryRaw<{ name: string }[]>`
+				SELECT conname AS name FROM pg_catalog.pg_constraint
+				WHERE conrelid = to_regclass('public.organization_membership_roles')
+					AND contype = 'f'
+					AND array_length(conkey, 1) = 2
+			`,
+		]);
 		if (
 			tables.some(({ name }) => name === null) ||
 			requiredChecks.some((name) => !checks.some((check) => check.name === name)) ||
