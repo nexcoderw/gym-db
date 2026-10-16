@@ -16,6 +16,13 @@ enum UserStatus {
   @@map("user_status")
 }
 
+enum OwnerSessionAssurance {
+  AAL1 @map("aal1")
+  AAL2 @map("aal2")
+
+  @@map("owner_session_assurance")
+}
+
 enum PlatformStaffStatus {
   PENDING   @map("pending")
   ACTIVE    @map("active")
@@ -156,6 +163,7 @@ model User {
   organizationMemberships    OrganizationMembership[]
   ownerEnrollmentChallenges  OrganizationOwnerEnrollmentChallenge[]
   ownerAcceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
+  ownerSessions              OwnerSession[]
 
   @@index([status], map: "users_status_idx")
   @@map("users")
@@ -442,6 +450,29 @@ model PlatformAdminSession {
   @@index([expiresAt], map: "platform_admin_sessions_expires_at_idx")
   @@index([idleExpiresAt], map: "platform_admin_sessions_idle_expires_at_idx")
   @@map("platform_admin_sessions")
+}
+
+/// Server-side session for the Organization Portal. It belongs to a global User rather than an
+/// Organization because tenant access is authorized from live membership, role and Organization
+/// state on every request. Only a purpose-separated digest of the opaque cookie token is persisted.
+model OwnerSession {
+  id                String                @id(map: "owner_sessions_pkey") @default(uuid()) @db.Uuid
+  userId            String                @map("user_id") @db.Uuid
+  tokenDigest       String                @unique(map: "owner_sessions_token_digest_key") @map("token_digest") @db.VarChar(128)
+  assurance         OwnerSessionAssurance @default(AAL1)
+  authenticatedAt   DateTime              @map("authenticated_at") @db.Timestamptz(6)
+  mfaVerifiedAt     DateTime?             @map("mfa_verified_at") @db.Timestamptz(6)
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastActivityAt    DateTime              @default(now()) @map("last_activity_at") @db.Timestamptz(6)
+  idleExpiresAt     DateTime              @map("idle_expires_at") @db.Timestamptz(6)
+  absoluteExpiresAt DateTime              @map("absolute_expires_at") @db.Timestamptz(6)
+  revokedAt         DateTime?             @map("revoked_at") @db.Timestamptz(6)
+  user              User                  @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "owner_sessions_user_id_fkey")
+
+  @@index([userId, revokedAt, idleExpiresAt, absoluteExpiresAt], map: "owner_sessions_user_active_idx")
+  @@index([idleExpiresAt], map: "owner_sessions_idle_expiry_idx")
+  @@index([absoluteExpiresAt], map: "owner_sessions_absolute_expiry_idx")
+  @@map("owner_sessions")
 }
 
 /// Encrypted TOTP factor for one platform staff identity. Encryption and authenticated-decryption
