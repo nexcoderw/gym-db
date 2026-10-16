@@ -393,7 +393,7 @@ describe('organization owner invitation delivery foundation', () => {
 					...clearedLease,
 				},
 			}),
-		).rejects.toThrow('owner_invitation_delivery_guard');
+		).rejects.toThrow('invalid delivery transition');
 
 		const recovered = await prisma.organizationOwnerInvitationDelivery.updateMany({
 			where: {
@@ -610,7 +610,7 @@ describe('organization owner invitation delivery foundation', () => {
 					confirmedAt: null,
 				},
 			}),
-		).rejects.toThrow('owner_invitation_delivery_guard');
+		).rejects.toThrow('invalid delivery reservation');
 	});
 
 	it('rolls back delivery preparation when its required administrator audit fails', async () => {
@@ -674,7 +674,7 @@ describe('organization owner invitation delivery foundation', () => {
 		for (const data of changes) {
 			await expect(
 				prisma.organizationOwnerInvitationDelivery.update({ where: { id: delivery.id }, data }),
-			).rejects.toThrow('owner_invitation_delivery_guard');
+			).rejects.toThrow('immutable delivery reservation');
 		}
 	});
 
@@ -742,7 +742,7 @@ describe('organization owner invitation delivery foundation', () => {
 				where: { id: delivery.id },
 				data: { attemptCount: 0 },
 			}),
-		).rejects.toThrow('owner_invitation_delivery_guard');
+		).rejects.toThrow('immutable delivery reservation');
 	});
 
 	it('rejects a direct confirmation without an atomically matching SENT invitation', async () => {
@@ -763,7 +763,7 @@ describe('organization owner invitation delivery foundation', () => {
 					...erasedToken(now),
 				},
 			}),
-		).rejects.toThrow('owner_invitation_delivery_guard');
+		).rejects.toThrow('delivery confirmation requires matching sent invitation');
 		const invitation = await prisma.organizationOwnerInvitation.findUniqueOrThrow({
 			where: { id: invitationId },
 		});
@@ -803,7 +803,7 @@ describe('organization owner invitation delivery foundation', () => {
 					claimedBy: 'revoked-claim-worker',
 				},
 			}),
-		).rejects.toThrow('owner_invitation_delivery_guard');
+		).rejects.toThrow('delivery cannot be claimed');
 		await expect(
 			prisma.organizationOwnerInvitation.update({
 				where: { id: invitationId },
@@ -847,7 +847,7 @@ describe('organization owner invitation delivery foundation', () => {
 					lastErrorCode: null,
 				},
 			}),
-		).rejects.toThrow('owner_invitation_delivery_guard');
+		).rejects.toThrow('invalid delivery transition');
 		await prisma.organizationOwnerInvitationDelivery.update({
 			where: { id: delivery.id },
 			data: erasedToken(new Date()),
@@ -982,7 +982,7 @@ describe('organization owner invitation delivery foundation', () => {
 					nextAttemptAt: new Date(),
 				},
 			}),
-		).rejects.toThrow('owner_invitation_delivery_guard');
+		).rejects.toThrow('immutable delivery reservation');
 	});
 
 	it('rejects queue-audit metadata describing a different invitation transition', async () => {
