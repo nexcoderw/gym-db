@@ -674,7 +674,10 @@ describe('organization owner invitation delivery foundation', () => {
 				data: { organizationId: otherOrganizationId },
 				rejection: 'immutable delivery parent',
 			},
-			{ data: { ownerInvitationId: otherInvitationId }, rejection: 'immutable delivery reservation' },
+			{
+				data: { ownerInvitationId: otherInvitationId },
+				rejection: 'immutable delivery reservation',
+			},
 			{
 				data: { requestedByPlatformStaffId: otherActorId },
 				rejection: 'immutable delivery reservation',
