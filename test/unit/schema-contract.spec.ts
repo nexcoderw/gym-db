@@ -59,6 +59,28 @@ describe('Prisma schema contract', () => {
 		expect(schema).not.toMatch(/^\s+(?:token|secret|recoveryCode)\s+/mu);
 	});
 
+	it('keeps owner sessions separate, opaque and globally scoped', async () => {
+		const schemaUrl = new URL('../../prisma/schema.prisma', import.meta.url);
+		const schema = await readFile(schemaUrl, 'utf8');
+		const session = /model OwnerSession \{[\s\S]*?\n\}/u.exec(schema)?.[0];
+
+		expect(session).toBeDefined();
+		expect(session).toMatch(/userId\s+String\s+@map\("user_id"\)/u);
+		expect(session).toMatch(/tokenDigest\s+String\s+@unique/u);
+		expect(session).toMatch(/assurance\s+OwnerSessionAssurance/u);
+		expect(session).toContain('authenticatedAt');
+		expect(session).toContain('mfaVerifiedAt');
+		expect(session).toContain('lastActivityAt');
+		expect(session).toContain('idleExpiresAt');
+		expect(session).toContain('absoluteExpiresAt');
+		expect(session).toContain('revokedAt');
+		expect(session).toContain('onDelete: Restrict, onUpdate: Restrict');
+		expect(session).not.toContain('platformStaffId');
+		expect(session).not.toContain('organizationId');
+		expect(session).not.toMatch(/^\s+token\s+/mu);
+		expect(schema).toMatch(/ownerSessions\s+OwnerSession\[\]/u);
+	});
+
 	it('uses restrictive foreign keys for security-sensitive relationships', async () => {
 		const schemaUrl = new URL('../../prisma/schema.prisma', import.meta.url);
 		const schema = await readFile(schemaUrl, 'utf8');
