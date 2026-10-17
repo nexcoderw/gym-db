@@ -2426,6 +2426,154 @@ call, worker, server, deployment, package publication or Git write was executed 
 human generated the migration drafts and supplied their output; reviewed SQL and focused tests were
 then authored for review. Owner-session deployment to development/production remains human-controlled.
 
+## Repairing owner enrollment runtime access
+
+An API log with `OWNER_ENROLLMENT_UNAVAILABLE` and SQLSTATE `42501` means PostgreSQL
+rejected a privilege required by enrollment. A successful probe using a nonexistent invitation
+does not verify this path: it stops before recipient reads, challenge writes and trigger row locks.
+The API runtime configuration must target the same branch and database inspected in Neon.
+
+For the development deployment using `gym_app` on `gym_dev`, run the following in Neon's SQL
+editor as the table owner or another authorized grantor. These grants cover challenge creation,
+registration, owner sessions and audited acceptance, including the SECURITY INVOKER triggers'
+reads and row locks. Challenge-only grants are insufficient: registration also inserts a user and
+password credential and binds identity proof to the challenge before creating a session. PostgreSQL
+locking reads require UPDATE privilege on at least one column of the locked table; granting
+UPDATE on `id` satisfies that requirement without granting every column. Existing integrity
+triggers still apply. This does not grant DELETE, schema creation or audit mutation privileges.
+
+```sql
+BEGIN;
+
+DO $guard$
+BEGIN
+  IF current_database() <> 'gym_dev' THEN
+    RAISE EXCEPTION 'Select gym_dev before applying runtime grants';
+  END IF;
+END;
+$guard$;
+
+GRANT USAGE ON SCHEMA public TO gym_app;
+GRANT SELECT ON TABLE public.organizations,
+  public.organization_owner_invitations, public.platform_staff TO gym_app;
+GRANT SELECT, INSERT ON TABLE public.users, public.password_credentials,
+  public.owner_sessions, public.organization_memberships, public.organization_roles,
+  public.organization_membership_roles,
+  public.organization_owner_acceptance_audit_events TO gym_app;
+GRANT UPDATE (id) ON TABLE public.users, public.organizations TO gym_app;
+GRANT UPDATE (status, accepted_at, token_digest, updated_at)
+  ON TABLE public.organization_owner_invitations TO gym_app;
+GRANT SELECT, INSERT ON TABLE public.organization_owner_enrollment_challenges TO gym_app;
+GRANT UPDATE (user_id, status, token_digest, mailbox_verified_at, authenticated_at,
+  verified_at, consumed_at, revoked_at, updated_at)
+  ON TABLE public.organization_owner_enrollment_challenges TO gym_app;
+GRANT UPDATE (status, activated_at, updated_at)
+  ON TABLE public.organization_memberships TO gym_app;
+GRANT UPDATE (last_activity_at, idle_expires_at, revoked_at)
+  ON TABLE public.owner_sessions TO gym_app;
+GRANT USAGE ON TYPE public.organization_owner_enrollment_purpose,
+  public.organization_owner_enrollment_status, public.user_status,
+  public.owner_session_assurance, public.organization_membership_status,
+  public.organization_status, public.organization_owner_invitation_status,
+  public.organization_owner_acceptance_audit_action TO gym_app;
+
+COMMIT;
+```
+
+Verify effective privileges before retrying the original email link or using the open page's
+invitation retry action:
+
+```sql
+SELECT current_database() AS database_name,
+  has_table_privilege('gym_app', 'public.organization_owner_enrollment_challenges', 'SELECT')
+    AS can_read_challenges,
+  has_table_privilege('gym_app', 'public.organization_owner_enrollment_challenges', 'INSERT')
+    AS can_create_challenges,
+  has_column_privilege('gym_app', 'public.organization_owner_enrollment_challenges',
+    'status', 'UPDATE') AS can_revoke_challenges,
+  has_column_privilege('gym_app', 'public.users', 'email', 'SELECT') AS can_find_recipient,
+  has_column_privilege('gym_app', 'public.users', 'id', 'UPDATE') AS can_lock_recipient,
+  has_column_privilege('gym_app', 'public.organization_owner_invitations', 'status', 'UPDATE')
+    AS can_lock_invitation;
+```
+
+Also check the registration and acceptance prerequisites (every `allowed` value must be true):
+
+```sql
+WITH required(table_name, privilege) AS (
+  VALUES
+    ('users', 'SELECT'), ('users', 'INSERT'),
+    ('password_credentials', 'SELECT'), ('password_credentials', 'INSERT'),
+    ('platform_staff', 'SELECT'),
+    ('owner_sessions', 'SELECT'), ('owner_sessions', 'INSERT'),
+    ('organization_memberships', 'SELECT'), ('organization_memberships', 'INSERT'),
+    ('organization_roles', 'SELECT'), ('organization_roles', 'INSERT'),
+    ('organization_membership_roles', 'SELECT'), ('organization_membership_roles', 'INSERT'),
+    ('organization_owner_acceptance_audit_events', 'SELECT'),
+    ('organization_owner_acceptance_audit_events', 'INSERT')
+)
+SELECT table_name, privilege,
+  has_table_privilege('gym_app', 'public.' || table_name, privilege) AS allowed
+FROM required
+UNION ALL
+SELECT table_name || '.' || column_name, 'UPDATE',
+  has_column_privilege('gym_app', 'public.' || table_name, column_name, 'UPDATE')
+FROM (VALUES
+  ('users', 'id'), ('organizations', 'id'),
+  ('organization_owner_invitations', 'status'),
+  ('organization_owner_invitations', 'accepted_at'),
+  ('organization_owner_invitations', 'token_digest'),
+  ('organization_owner_invitations', 'updated_at'),
+  ('organization_owner_enrollment_challenges', 'user_id'),
+  ('organization_owner_enrollment_challenges', 'status'),
+  ('organization_owner_enrollment_challenges', 'token_digest'),
+  ('organization_owner_enrollment_challenges', 'mailbox_verified_at'),
+  ('organization_owner_enrollment_challenges', 'authenticated_at'),
+  ('organization_owner_enrollment_challenges', 'verified_at'),
+  ('organization_owner_enrollment_challenges', 'consumed_at'),
+  ('organization_owner_enrollment_challenges', 'revoked_at'),
+  ('organization_owner_enrollment_challenges', 'updated_at'),
+  ('organization_memberships', 'status'),
+  ('organization_memberships', 'activated_at'),
+  ('organization_memberships', 'updated_at'),
+  ('owner_sessions', 'last_activity_at'),
+  ('owner_sessions', 'idle_expires_at'),
+  ('owner_sessions', 'revoked_at')
+) AS required_columns(table_name, column_name)
+ORDER BY 1, 2;
+```
+
+These checks establish ACL prerequisites, not successful end-to-end enrollment. They do not test
+RLS, schema drift, network health or application state. If `42501` persists, inspect the denied object,
+RLS policies and trigger dependencies using protected diagnostics; do not disable RLS or change table
+ownership to bypass the failure. Do not rewrite applied migrations or grant DML on all tables.
+The grants take effect for subsequent requests without rebuilding either application. They are
+operator-managed role provisioning, separate from Prisma schema migration history. Reapplying the
+same grants is safe; reversing them requires checking other workflows that share the role first.
+
+### Transaction start timeouts are a separate failure
+
+`P2028 transactionFailure=start_timeout` means Prisma did not finish starting its transaction
+within the configured wait. It does not identify whether the delay is local pool acquisition,
+connecting to PostgreSQL, or starting the transaction. Do not retry registration automatically,
+disable integrity triggers, or increase all timeouts to hide this failure.
+
+For this local deployment, compare pooled and direct connectivity while keeping the same
+`gym_app` credentials, `gym_dev` database and TLS settings. In `api/api/.env.local`, change only
+the database hostname from `ep-small-sunset-b4okvte8-pooler.c-6.us-east-2.aws.neon.tech` to
+`ep-small-sunset-b4okvte8.c-6.us-east-2.aws.neon.tech`, then restart the API. Stop the local invitation
+worker during this controlled comparison and restart it afterward. Do not use `gym_migrator` or
+`neondb_owner` as the runtime identity. Keep the original hostname privately so the change is reversible.
+This is a diagnostic comparison, not a requirement to abandon pooling in production. Direct
+connections must stay within the database connection budget across all processes and replicas.
+
+Repeat session reads and a valid enrollment attempt, recording request IDs, elapsed times and
+safe error codes for each connection mode. If only the pooled route fails, investigate the pooler
+and its connection budget; if both fail, inspect local pool pressure, network latency and database
+health. A blank `pg_stat_activity.state` under another role is not evidence of an idle backend,
+and a snapshot with empty blocking PID arrays cannot rule out an earlier timeout. Use an authorized
+operator for activity inspection; do not grant monitoring or superuser privileges to `gym_app`.
+
 ## Engineering rules
 
 All contributors and agents must read `AGENTS.md` and `.agents/README.md`. These rules prohibit agents
