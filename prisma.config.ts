@@ -6,8 +6,13 @@ config({
 	path: process.env.NODE_ENV === 'production' ? '.env.production' : '.env.migrations.local',
 });
 
-const migrationDatabaseUrl = process.env.DIRECT_DATABASE_URL ?? env('DATABASE_URL');
-const shadowDatabaseUrl = process.env.SHADOW_DATABASE_URL;
+const production = process.env.NODE_ENV === 'production';
+
+// Production deploys deliberately ignore every alternate connection role and target.
+const migrationDatabaseUrl = production
+	? env('DATABASE_URL')
+	: (process.env.DIRECT_DATABASE_URL ?? env('DATABASE_URL'));
+const shadowDatabaseUrl = production ? undefined : process.env.SHADOW_DATABASE_URL;
 
 if (shadowDatabaseUrl !== undefined && shadowDatabaseUrl === migrationDatabaseUrl) {
 	throw new Error(
