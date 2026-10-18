@@ -134,6 +134,62 @@ describe('organization member persistence', () => {
 		expect(await prisma.organizationMember.findFirst({ where: { organizationId: otherGym, id } })).toBeNull();
 	});
 
+	it('enforces profile checks in PostgreSQL', async () => {
+		await expect(createMember(gym, ' ', '+250700000001')).rejects.toMatchObject(sqlState('23514'));
+		await expect(createMember(gym, 'example member', '0700000001')).rejects.toMatchObject(sqlState('23514'));
+	});
+
+	it.each([
+		{ periodCount: 0 },
+		{ periodCount: 121 },
+		{ priceRwf: -1n },
+		{ requestFingerprint: 'invalid' },
+		{ endDate: new Date('2030-02-01T00:00:00.000Z') },
+		{ cancelledByUserId: null, cancelledAt: new Date() },
+	])('rejects invalid subscription data in PostgreSQL: %#', async (invalid) => {
+		const member = await createMember(gym);
+		await expect(prisma.organizationMemberSubscription.create({
+			data: { ...subscriptionData(gym, member.id, plan), ...invalid },
+		})).rejects.toMatchObject(sqlState('23514'));
+	});
+
+	it('rejects concurrent overlapping registrations without application locks', async () => {
+		const member = await createMember(gym);
+		const results = await Promise.allSettled([
+			prisma.organizationMemberSubscription.create({ data: subscriptionData(gym, member.id, plan) }),
+			prisma.organizationMemberSubscription.create({ data: subscriptionData(gym, member.id, plan) }),
+		]);
+		expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+		const rejected = results.find((result) => result.status === 'rejected');
+		expect(rejected?.reason).toMatchObject(sqlState('23P01'));
+	});
+
+	it('allows adjacent periods and replacement after cancellation, preserving history', async () => {
+		const member = await createMember(gym);
+		const registered = await prisma.organizationMemberSubscription.create({ data: subscriptionData(gym, member.id, plan) });
+		await prisma.organizationMemberSubscription.create({
+			data: {
+				...subscriptionData(gym, member.id, plan),
+				startDate: new Date('2030-02-01T00:00:00.000Z'),
+				endDate: new Date('2030-02-28T00:00:00.000Z'),
+			},
+		});
+		await expect(prisma.organizationMemberSubscription.update({
+			where: { id: registered.id }, data: { priceRwf: 1n },
+		})).rejects.toMatchObject(sqlState('23514'));
+		await prisma.organizationMemberSubscription.update({
+			where: { id: registered.id }, data: { cancelledAt: new Date(), cancelledByUserId: actor },
+		});
+		await expect(prisma.organizationMemberSubscription.update({
+			where: { id: registered.id }, data: { cancelledAt: null, cancelledByUserId: null },
+		})).rejects.toMatchObject(sqlState('23514'));
+		await prisma.organizationMemberSubscription.create({ data: subscriptionData(gym, member.id, plan) });
+	});
+
+	function sqlState(code: string) {
+		return { meta: { driverAdapterError: { cause: { originalCode: code } } } };
+	}
+
 	function reserve(ids: Set<string>): string {
 		assertTestDatabaseWasVerified(verified);
 		const id = randomUUID();
