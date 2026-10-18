@@ -29,7 +29,9 @@ an agent; the expansion is not deployed until the human confirms it.
   are ignored by Git, compiled into `dist`, and included in the published package.
 - `DatabaseModule` creates one lifecycle-managed `PrismaService` using `@prisma/adapter-pg`.
 - `TenantTransactionService` installs transaction-local organization and branch context for future
-  fail-closed PostgreSQL RLS policies. Prisma does not provide tenant isolation on its own.
+  fail-closed PostgreSQL RLS policies. A caller may supply a reviewed `maxWait`/`timeout` budget
+  for a longer atomic workflow; other calls retain Prisma's default budget. Prisma does not provide
+  tenant isolation on its own.
 - Global users remain separate from NEXCODE platform-staff assignments and explicit platform RBAC.
   Creating an account grants no platform access.
 - Platform administration authentication uses dedicated server-session, TOTP, recovery-code, and
