@@ -27,6 +27,7 @@ export class TenantTransactionService {
 	async run<TResult>(
 		context: TenantContext,
 		operation: TenantTransactionCallback<TResult>,
+		options?: Readonly<{ maxWait: number; timeout: number }>,
 	): Promise<TResult> {
 		this.assertUuid(context.organizationId, 'organizationId');
 		if (context.branchId !== undefined) {
@@ -42,7 +43,7 @@ export class TenantTransactionService {
 			`;
 
 			return operation(transaction);
-		});
+		}, options);
 	}
 
 	private assertUuid(value: string, field: keyof TenantContext): void {
