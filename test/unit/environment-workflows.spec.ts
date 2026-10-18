@@ -59,6 +59,21 @@ describe('database workflow environment boundaries', () => {
 		const config = await readRootFile('prisma.test.config.ts');
 		expect(config).toContain("env('TEST_MIGRATION_DATABASE_URL')");
 		expect(config).not.toContain('shadowDatabaseUrl');
-		expect(await readRootFile('prisma.config.ts')).toContain("path: '.env.migrations.local'");
+		expect(config).toContain("path: '.env.migrations.local'");
+		const migrationConfig = await readRootFile('prisma.config.ts');
+		expect(migrationConfig).toMatch(
+			/path:\s*process\.env\.NODE_ENV\s*===\s*'production'\s*\?\s*'\.env\.production'\s*:\s*'\.env\.migrations\.local'/u,
+		);
+	});
+
+	it('keeps production migrations on DATABASE_URL without a shadow database', async () => {
+		const config = await readRootFile('prisma.config.ts');
+		expect(config).toContain("const production = process.env.NODE_ENV === 'production'");
+		expect(config).toMatch(
+			/const migrationDatabaseUrl\s*=\s*production\s*\?\s*env\('DATABASE_URL'\)\s*:\s*\(process\.env\.DIRECT_DATABASE_URL\s*\?\?\s*env\('DATABASE_URL'\)\)/u,
+		);
+		expect(config).toMatch(
+			/const shadowDatabaseUrl\s*=\s*production\s*\?\s*undefined\s*:\s*process\.env\.SHADOW_DATABASE_URL/u,
+		);
 	});
 });
