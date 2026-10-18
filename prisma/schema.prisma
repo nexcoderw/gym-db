@@ -207,7 +207,7 @@ model OrganizationMember {
 /// A dated plan registration, not a provider-confirmed payment. End date is inclusive.
 /// Tenant-composite foreign keys prevent cross-gym member/plan links at the database boundary.
 /// Plan snapshots preserve agreed terms; cancellation retains history. Integrity CHECKs and
-/// a non-overlap trigger must be reviewed in the human-generated migration before deployment.
+/// a GiST exclusion constraint enforce dates and concurrent non-overlap in the migration.
 model OrganizationMemberSubscription {
   id                 String                     @id(map: "member_subscriptions_pkey") @default(uuid()) @db.Uuid
   organizationId     String                     @map("organization_id") @db.Uuid
