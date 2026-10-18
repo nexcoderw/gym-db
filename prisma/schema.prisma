@@ -59,6 +59,43 @@ enum MemberPeriodUnit {
   @@map("member_period_unit")
 }
 
+enum OrganizationPaymentMethod {
+  CASH          @map("cash")
+  MOBILE_MONEY  @map("mobile_money")
+  BANK_TRANSFER @map("bank_transfer")
+  CARD          @map("card")
+  OTHER         @map("other")
+
+  @@map("organization_payment_method")
+}
+
+enum OrganizationPaymentStatus {
+  PENDING            @map("pending")
+  CONFIRMED          @map("confirmed")
+  FAILED             @map("failed")
+  VOIDED             @map("voided")
+  PARTIALLY_REFUNDED @map("partially_refunded")
+  REFUNDED           @map("refunded")
+
+  @@map("organization_payment_status")
+}
+
+enum OrganizationPaymentRefundStatus {
+  PENDING   @map("pending")
+  CONFIRMED @map("confirmed")
+  FAILED    @map("failed")
+
+  @@map("organization_payment_refund_status")
+}
+
+enum OrganizationPaymentAuditAction {
+  PAYMENT_RECORDED @map("payment_recorded")
+  PAYMENT_VOIDED   @map("payment_voided")
+  REFUND_RECORDED  @map("refund_recorded")
+
+  @@map("organization_payment_audit_action")
+}
+
 enum OrganizationOwnerInvitationStatus {
   PENDING_DELIVERY @map("pending_delivery")
   SENT             @map("sent")
@@ -155,6 +192,10 @@ model Organization {
   membershipPlans            OrganizationMembershipPlan[]
   members                    OrganizationMember[]
   memberSubscriptions        OrganizationMemberSubscription[]
+  payments                   OrganizationPayment[]
+  paymentAllocations         OrganizationPaymentAllocation[]
+  paymentRefunds             OrganizationPaymentRefund[]
+  paymentAuditEvents         OrganizationPaymentAuditEvent[]
 
   @@index([status, createdAt(sort: Desc), id], map: "organizations_status_created_at_id_idx")
   @@map("organizations")
@@ -196,6 +237,7 @@ model OrganizationMember {
   updatedAt      DateTime                         @updatedAt @map("updated_at") @db.Timestamptz(6)
   organization   Organization                     @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_members_org_fkey")
   subscriptions  OrganizationMemberSubscription[]
+  payments       OrganizationPayment[]
 
   @@unique([organizationId, normalizedName], map: "organization_members_org_name_key")
   @@unique([organizationId, phoneNumber], map: "organization_members_org_phone_key")
@@ -209,35 +251,158 @@ model OrganizationMember {
 /// Plan snapshots preserve agreed terms; cancellation retains history. Integrity CHECKs and
 /// a GiST exclusion constraint enforce dates and concurrent non-overlap in the migration.
 model OrganizationMemberSubscription {
-  id                 String                     @id(map: "member_subscriptions_pkey") @default(uuid()) @db.Uuid
-  organizationId     String                     @map("organization_id") @db.Uuid
-  memberId           String                     @map("member_id") @db.Uuid
-  membershipPlanId   String                     @map("membership_plan_id") @db.Uuid
-  planName           String                     @map("plan_name") @db.VarChar(120)
-  priceRwf           BigInt                     @map("price_rwf")
-  periodUnit         MemberPeriodUnit           @map("period_unit")
-  periodCount        Int                        @map("period_count")
-  startDate          DateTime                   @map("start_date") @db.Date
-  endDate            DateTime                   @map("end_date") @db.Date
-  idempotencyKey     String                     @map("idempotency_key") @db.Uuid
-  requestFingerprint String                     @map("request_fingerprint") @db.VarChar(64)
-  createdByUserId    String                     @map("created_by_user_id") @db.Uuid
-  cancelledAt        DateTime?                  @map("cancelled_at") @db.Timestamptz(6)
-  cancelledByUserId  String?                    @map("cancelled_by_user_id") @db.Uuid
-  createdAt          DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
-  organization       Organization               @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_org_fkey")
-  member             OrganizationMember         @relation(fields: [organizationId, memberId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_member_fkey")
-  membershipPlan     OrganizationMembershipPlan @relation(fields: [organizationId, membershipPlanId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_plan_fkey")
-  createdBy          User                       @relation("MemberSubscriptionCreator", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_creator_fkey")
-  cancelledBy        User?                      @relation("MemberSubscriptionCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_canceller_fkey")
+  id                 String                          @id(map: "member_subscriptions_pkey") @default(uuid()) @db.Uuid
+  organizationId     String                          @map("organization_id") @db.Uuid
+  memberId           String                          @map("member_id") @db.Uuid
+  membershipPlanId   String                          @map("membership_plan_id") @db.Uuid
+  planName           String                          @map("plan_name") @db.VarChar(120)
+  priceRwf           BigInt                          @map("price_rwf")
+  periodUnit         MemberPeriodUnit                @map("period_unit")
+  periodCount        Int                             @map("period_count")
+  startDate          DateTime                        @map("start_date") @db.Date
+  endDate            DateTime                        @map("end_date") @db.Date
+  idempotencyKey     String                          @map("idempotency_key") @db.Uuid
+  requestFingerprint String                          @map("request_fingerprint") @db.VarChar(64)
+  createdByUserId    String                          @map("created_by_user_id") @db.Uuid
+  cancelledAt        DateTime?                       @map("cancelled_at") @db.Timestamptz(6)
+  cancelledByUserId  String?                         @map("cancelled_by_user_id") @db.Uuid
+  createdAt          DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization       Organization                    @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_org_fkey")
+  member             OrganizationMember              @relation(fields: [organizationId, memberId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_member_fkey")
+  membershipPlan     OrganizationMembershipPlan      @relation(fields: [organizationId, membershipPlanId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_plan_fkey")
+  createdBy          User                            @relation("MemberSubscriptionCreator", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_creator_fkey")
+  cancelledBy        User?                           @relation("MemberSubscriptionCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_canceller_fkey")
+  paymentAllocations OrganizationPaymentAllocation[]
 
   @@unique([organizationId, idempotencyKey], map: "member_subscriptions_org_idempotency_key")
+  @@unique([organizationId, id, memberId], map: "member_subscriptions_org_id_member_key")
   @@index([organizationId, memberId, createdAt(sort: Desc), id], map: "member_subscriptions_org_member_created_idx")
   @@index([organizationId, memberId, cancelledAt, startDate, endDate], map: "member_subscriptions_org_member_dates_idx")
   @@index([organizationId, membershipPlanId], map: "member_subscriptions_org_plan_idx")
   @@index([organizationId, endDate, id], map: "member_subscriptions_org_expiry_idx")
   @@map("organization_member_subscriptions")
+}
+
+/// Tenant-owned gym-member payment ledger. A registration is not payment evidence: cash is
+/// confirmed when recorded by an authorized owner, while external methods remain pending until a
+/// separately reviewed provider or reconciliation workflow verifies them.
+model OrganizationPayment {
+  id                 String                          @id(map: "organization_payments_pkey") @default(uuid()) @db.Uuid
+  organizationId     String                          @map("organization_id") @db.Uuid
+  memberId           String                          @map("member_id") @db.Uuid
+  receiptNumber      String                          @map("receipt_number") @db.VarChar(48)
+  amountRwf          BigInt                          @map("amount_rwf")
+  method             OrganizationPaymentMethod
+  status             OrganizationPaymentStatus       @default(PENDING)
+  providerReference  String?                         @map("provider_reference") @db.VarChar(120)
+  note               String?                         @db.VarChar(500)
+  occurredAt         DateTime                        @map("occurred_at") @db.Timestamptz(6)
+  confirmedAt        DateTime?                       @map("confirmed_at") @db.Timestamptz(6)
+  failedAt           DateTime?                       @map("failed_at") @db.Timestamptz(6)
+  voidedAt           DateTime?                       @map("voided_at") @db.Timestamptz(6)
+  voidReason         String?                         @map("void_reason") @db.VarChar(500)
+  idempotencyKey     String                          @map("idempotency_key") @db.Uuid
+  requestFingerprint String                          @map("request_fingerprint") @db.VarChar(64)
+  recordedByUserId   String                          @map("recorded_by_user_id") @db.Uuid
+  voidedByUserId     String?                         @map("voided_by_user_id") @db.Uuid
+  createdAt          DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization       Organization                    @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_payments_org_fkey")
+  member             OrganizationMember              @relation(fields: [organizationId, memberId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "organization_payments_member_fkey")
+  recordedBy         User                            @relation("PaymentRecorder", fields: [recordedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_payments_recorder_fkey")
+  voidedBy           User?                           @relation("PaymentVoider", fields: [voidedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_payments_voider_fkey")
+  allocations        OrganizationPaymentAllocation[]
+  refunds            OrganizationPaymentRefund[]
+  auditEvents        OrganizationPaymentAuditEvent[]
+
+  @@unique([organizationId, id], map: "organization_payments_org_id_key")
+  @@unique([organizationId, id, memberId], map: "organization_payments_org_id_member_key")
+  @@unique([organizationId, receiptNumber], map: "organization_payments_org_receipt_key")
+  @@unique([organizationId, idempotencyKey], map: "organization_payments_org_idempotency_key")
+  @@unique([organizationId, method, providerReference], map: "organization_payments_org_provider_ref_key")
+  @@index([organizationId, status, occurredAt(sort: Desc), id], map: "organization_payments_org_status_time_idx")
+  @@index([organizationId, method, occurredAt(sort: Desc), id], map: "organization_payments_org_method_time_idx")
+  @@index([organizationId, memberId, occurredAt(sort: Desc), id], map: "organization_payments_org_member_time_idx")
+  @@map("organization_payments")
+}
+
+/// Allocation rows keep payment money separate from registration terms and allow future split or
+/// installment collection without rewriting immutable payment evidence.
+model OrganizationPaymentAllocation {
+  id                   String                         @id(map: "organization_payment_allocations_pkey") @default(uuid()) @db.Uuid
+  organizationId       String                         @map("organization_id") @db.Uuid
+  paymentId            String                         @map("payment_id") @db.Uuid
+  memberId             String                         @map("member_id") @db.Uuid
+  memberSubscriptionId String                         @map("member_subscription_id") @db.Uuid
+  amountRwf            BigInt                         @map("amount_rwf")
+  createdAt            DateTime                       @default(now()) @map("created_at") @db.Timestamptz(6)
+  organization         Organization                   @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "payment_allocations_org_fkey")
+  payment              OrganizationPayment            @relation(fields: [organizationId, paymentId, memberId], references: [organizationId, id, memberId], onDelete: Restrict, onUpdate: Restrict, map: "payment_allocations_payment_fkey")
+  memberSubscription   OrganizationMemberSubscription @relation(fields: [organizationId, memberSubscriptionId, memberId], references: [organizationId, id, memberId], onDelete: Restrict, onUpdate: Restrict, map: "payment_allocations_subscription_fkey")
+
+  @@unique([organizationId, paymentId, memberSubscriptionId], map: "payment_allocations_org_payment_subscription_key")
+  @@index([organizationId, memberSubscriptionId, createdAt(sort: Desc), id], map: "payment_allocations_org_subscription_idx")
+  @@map("organization_payment_allocations")
+}
+
+/// Refunds are append-only financial commands. Cash refunds are confirmed by the authorized actor;
+/// external refunds remain pending until provider verification is implemented.
+model OrganizationPaymentRefund {
+  id                 String                          @id(map: "organization_payment_refunds_pkey") @default(uuid()) @db.Uuid
+  organizationId     String                          @map("organization_id") @db.Uuid
+  paymentId          String                          @map("payment_id") @db.Uuid
+  memberId           String                          @map("member_id") @db.Uuid
+  amountRwf          BigInt                          @map("amount_rwf")
+  status             OrganizationPaymentRefundStatus @default(PENDING)
+  reason             String                          @db.VarChar(500)
+  providerReference  String?                         @map("provider_reference") @db.VarChar(120)
+  idempotencyKey     String                          @map("idempotency_key") @db.Uuid
+  requestFingerprint String                          @map("request_fingerprint") @db.VarChar(64)
+  requestedByUserId  String                          @map("requested_by_user_id") @db.Uuid
+  confirmedAt        DateTime?                       @map("confirmed_at") @db.Timestamptz(6)
+  failedAt           DateTime?                       @map("failed_at") @db.Timestamptz(6)
+  createdAt          DateTime                        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                        @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization       Organization                    @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "payment_refunds_org_fkey")
+  payment            OrganizationPayment             @relation(fields: [organizationId, paymentId, memberId], references: [organizationId, id, memberId], onDelete: Restrict, onUpdate: Restrict, map: "payment_refunds_payment_fkey")
+  requestedBy        User                            @relation("PaymentRefundRequester", fields: [requestedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "payment_refunds_requester_fkey")
+  auditEvents        OrganizationPaymentAuditEvent[]
+
+  @@unique([organizationId, id], map: "organization_payment_refunds_org_id_key")
+  @@unique([organizationId, idempotencyKey], map: "organization_payment_refunds_org_idempotency_key")
+  @@unique([organizationId, providerReference], map: "organization_payment_refunds_org_provider_ref_key")
+  @@index([organizationId, paymentId, createdAt(sort: Desc), id], map: "payment_refunds_org_payment_time_idx")
+  @@index([organizationId, status, createdAt(sort: Desc), id], map: "payment_refunds_org_status_time_idx")
+  @@map("organization_payment_refunds")
+}
+
+/// Append-only security and financial history for successful payment commands. Request IDs support
+/// correlation without storing request bodies, member contact details or provider payloads.
+model OrganizationPaymentAuditEvent {
+  id                 String                         @id(map: "organization_payment_audit_events_pkey") @default(uuid()) @db.Uuid
+  organizationId     String                         @map("organization_id") @db.Uuid
+  paymentId          String                         @map("payment_id") @db.Uuid
+  refundId           String?                        @map("refund_id") @db.Uuid
+  actorUserId        String                         @map("actor_user_id") @db.Uuid
+  action             OrganizationPaymentAuditAction
+  requestId          String                         @map("request_id") @db.VarChar(128)
+  idempotencyKey     String                         @map("idempotency_key") @db.Uuid
+  requestFingerprint String                         @map("request_fingerprint") @db.VarChar(64)
+  previousStatus     OrganizationPaymentStatus?     @map("previous_status")
+  resultingStatus    OrganizationPaymentStatus      @map("resulting_status")
+  occurredAt         DateTime                       @map("occurred_at") @db.Timestamptz(6)
+  recordedAt         DateTime                       @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  organization       Organization                   @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "payment_audit_events_org_fkey")
+  payment            OrganizationPayment            @relation(fields: [organizationId, paymentId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "payment_audit_events_payment_fkey")
+  refund             OrganizationPaymentRefund?     @relation(fields: [organizationId, refundId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "payment_audit_events_refund_fkey")
+  actor              User                           @relation("PaymentAuditActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "payment_audit_events_actor_fkey")
+
+  @@unique([organizationId, idempotencyKey], map: "payment_audit_events_org_idempotency_key")
+  @@index([organizationId, paymentId, recordedAt(sort: Desc), id], map: "payment_audit_events_org_payment_time_idx")
+  @@index([organizationId, actorUserId, recordedAt(sort: Desc), id], map: "payment_audit_events_org_actor_time_idx")
+  @@index([requestId], map: "payment_audit_events_request_idx")
+  @@map("organization_payment_audit_events")
 }
 
 /// Global login identity. An account has no platform privileges without an active PlatformStaff
@@ -247,6 +412,10 @@ model User {
   email                        String                                  @unique(map: "users_email_key") @db.Citext
   createdMemberSubscriptions   OrganizationMemberSubscription[]        @relation("MemberSubscriptionCreator")
   cancelledMemberSubscriptions OrganizationMemberSubscription[]        @relation("MemberSubscriptionCanceller")
+  recordedOrganizationPayments OrganizationPayment[]                   @relation("PaymentRecorder")
+  voidedOrganizationPayments   OrganizationPayment[]                   @relation("PaymentVoider")
+  requestedPaymentRefunds      OrganizationPaymentRefund[]             @relation("PaymentRefundRequester")
+  paymentAuditEvents           OrganizationPaymentAuditEvent[]         @relation("PaymentAuditActor")
   displayName                  String                                  @map("display_name") @db.VarChar(160)
   status                       UserStatus                              @default(PENDING)
   emailVerifiedAt              DateTime?                               @map("email_verified_at") @db.Timestamptz(6)
