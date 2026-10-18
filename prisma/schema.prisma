@@ -143,9 +143,31 @@ model Organization {
   ownershipAuditEvents       OrganizationOwnershipAuditEvent[]
   ownerEnrollmentChallenges  OrganizationOwnerEnrollmentChallenge[]
   ownerAcceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
+  membershipPlans            OrganizationMembershipPlan[]
 
   @@index([status, createdAt(sort: Desc), id], map: "organizations_status_created_at_id_idx")
   @@map("organizations")
+}
+
+/// Organization-owned commercial membership offer. Prices are exact whole Rwandan francs;
+/// description is optional free text for included activities. Archival retains historical identity
+/// so future member subscriptions can continue to reference the plan safely.
+model OrganizationMembershipPlan {
+  id             String       @id(map: "organization_membership_plans_pkey") @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  name           String       @db.VarChar(120)
+  normalizedName String       @map("normalized_name") @db.VarChar(120)
+  priceRwf       BigInt       @map("price_rwf")
+  description    String?      @db.VarChar(1000)
+  archivedAt     DateTime?    @map("archived_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_membership_plans_organization_fkey")
+
+  @@unique([organizationId, normalizedName], map: "organization_membership_plans_org_name_key")
+  @@unique([organizationId, id], map: "organization_membership_plans_organization_id_key")
+  @@index([organizationId, archivedAt, createdAt(sort: Desc), id], map: "organization_membership_plans_org_archive_created_id_idx")
+  @@map("organization_membership_plans")
 }
 
 /// Global login identity. An account has no platform privileges without an active PlatformStaff
