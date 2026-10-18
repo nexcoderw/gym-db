@@ -10,8 +10,11 @@ async function createSubject(
 	queryRaw: jest.Mock<RawQuery> = jest.fn<RawQuery>().mockResolvedValue([]),
 ) {
 	const operationClient = { $queryRaw: queryRaw };
-	const transaction = jest.fn((callback: (client: typeof operationClient) => unknown) =>
-		Promise.resolve(callback(operationClient)),
+	const transaction = jest.fn(
+		(
+			callback: (client: typeof operationClient) => unknown,
+			_options?: Readonly<{ maxWait: number; timeout: number }>,
+		) => Promise.resolve(callback(operationClient)),
 	);
 	const module = await Test.createTestingModule({
 		providers: [
@@ -86,6 +89,20 @@ describe('TenantTransactionService', () => {
 
 		expect(queryRaw.mock.calls[0]?.[1]).toBe(organizationId);
 		expect(queryRaw.mock.calls[1]?.[1]).toBe(branchId);
+	});
+
+	it('passes a bounded transaction budget without changing tenant initialization', async () => {
+		const { service, transaction, queryRaw } = await createSubject();
+		const options = { maxWait: 5_000, timeout: 20_000 };
+
+		await service.run(
+			{ organizationId: '11111111-1111-4111-8111-111111111111' },
+			() => Promise.resolve(undefined),
+			options,
+		);
+
+		expect(transaction.mock.calls[0]?.[1]).toEqual(options);
+		expect(queryRaw).toHaveBeenCalledTimes(2);
 	});
 
 	it('does not invoke the operation when tenant context initialization fails', async () => {
