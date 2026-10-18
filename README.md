@@ -2576,5 +2576,30 @@ operator for activity inspection; do not grant monitoring or superuser privilege
 
 ## Engineering rules
 
+### Member schema expansion pending migration review
+
+`OrganizationMember` stores gym customers separately from login users and staff memberships.
+`OrganizationMemberSubscription` stores dated plan registrations, with organization-composite member
+and plan foreign keys, inclusive date-only boundaries, plan name/whole-RWF price snapshots, registration
+idempotency and creation/cancellation actor references. Names and canonical phones are independently
+unique within each organization; emails are nullable and not unique. Archival and cancellation retain
+history and do not constitute payment confirmation or a personal-data erasure policy.
+
+The schema expansion still requires a human-generated create-only migration. Before deployment,
+review that SQL and add nonblank/contact/date/price/period/cancellation consistency checks and
+database enforcement of non-overlapping uncancelled registrations. Preserve tenant-leading foreign
+keys and indexes; do not weaken existing migrations. The API supplies transaction-local tenant context
+and locks members and plans, but those operations are not substitutes for SQL integrity review.
+
+Runtime provisioning must cover SELECT/INSERT and only mutable member profile/archive columns,
+SELECT/INSERT and cancellation/update timestamps for subscriptions, USAGE on the period enum, and the
+parent locking privileges used by the API. Never copy test-only DELETE grants to the runtime role.
+Review effective inherited/PUBLIC privileges separately. Apply reviewed expansion and grants before
+generating/building the database package and restarting its API consumer. The expansion is additive;
+rollback after registrations exist must preserve customer and registration history.
+
+The new schema and integration tests have not been run. The disposable integration suite verifies its
+independent database marker and table privileges before writes and deletes only tracked fixture IDs.
+
 All contributors and agents must read `AGENTS.md` and `.agents/README.md`. These rules prohibit agents
 from executing installation, generation, validation, database, Git, or release commands.
