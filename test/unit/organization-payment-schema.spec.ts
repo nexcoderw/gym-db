@@ -36,11 +36,22 @@ describe('organization payment storage contract', () => {
 	it('models verified and unverified payment states explicitly', async () => {
 		const source = await readFile(new URL('../../prisma/schema.prisma', import.meta.url), 'utf8');
 
-		for (const value of ['PENDING', 'CONFIRMED', 'FAILED', 'VOIDED', 'PARTIALLY_REFUNDED', 'REFUNDED']) {
-			expect(source).toMatch(new RegExp(`enum OrganizationPaymentStatus \\{[\\s\\S]*?${value}`, 'u'));
+		for (const value of [
+			'PENDING',
+			'CONFIRMED',
+			'FAILED',
+			'VOIDED',
+			'PARTIALLY_REFUNDED',
+			'REFUNDED',
+		]) {
+			expect(source).toMatch(
+				new RegExp(`enum OrganizationPaymentStatus \\{[\\s\\S]*?${value}`, 'u'),
+			);
 		}
 		for (const method of ['CASH', 'MOBILE_MONEY', 'BANK_TRANSFER', 'CARD', 'OTHER']) {
-			expect(source).toMatch(new RegExp(`enum OrganizationPaymentMethod \\{[\\s\\S]*?${method}`, 'u'));
+			expect(source).toMatch(
+				new RegExp(`enum OrganizationPaymentMethod \\{[\\s\\S]*?${method}`, 'u'),
+			);
 		}
 	});
 
