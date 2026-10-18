@@ -15,7 +15,9 @@ async function createSubject(
 			callback: (client: typeof operationClient) => unknown,
 			options?: Readonly<{ maxWait: number; timeout: number }>,
 		) => {
-			void options;
+			if ((options?.timeout ?? 0) < 0) {
+				throw new Error('Transaction timeout cannot be negative.');
+			}
 			return Promise.resolve(callback(operationClient));
 		},
 	);
