@@ -50,6 +50,15 @@ enum OrganizationMembershipStatus {
   @@map("organization_membership_status")
 }
 
+enum MemberPeriodUnit {
+  DAYS   @map("days")
+  WEEKS  @map("weeks")
+  MONTHS @map("months")
+  YEARS  @map("years")
+
+  @@map("member_period_unit")
+}
+
 enum OrganizationOwnerInvitationStatus {
   PENDING_DELIVERY @map("pending_delivery")
   SENT             @map("sent")
@@ -144,6 +153,8 @@ model Organization {
   ownerEnrollmentChallenges  OrganizationOwnerEnrollmentChallenge[]
   ownerAcceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
   membershipPlans            OrganizationMembershipPlan[]
+  members                    OrganizationMember[]
+  memberSubscriptions        OrganizationMemberSubscription[]
 
   @@index([status, createdAt(sort: Desc), id], map: "organizations_status_created_at_id_idx")
   @@map("organizations")
@@ -153,16 +164,17 @@ model Organization {
 /// description is optional free text for included activities. Archival retains historical identity
 /// so future member subscriptions can continue to reference the plan safely.
 model OrganizationMembershipPlan {
-  id             String       @id(map: "organization_membership_plans_pkey") @default(uuid()) @db.Uuid
-  organizationId String       @map("organization_id") @db.Uuid
-  name           String       @db.VarChar(120)
-  normalizedName String       @map("normalized_name") @db.VarChar(120)
-  priceRwf       BigInt       @map("price_rwf")
-  description    String?      @db.VarChar(1000)
-  archivedAt     DateTime?    @map("archived_at") @db.Timestamptz(6)
-  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_membership_plans_organization_fkey")
+  id             String                           @id(map: "organization_membership_plans_pkey") @default(uuid()) @db.Uuid
+  organizationId String                           @map("organization_id") @db.Uuid
+  name           String                           @db.VarChar(120)
+  normalizedName String                           @map("normalized_name") @db.VarChar(120)
+  priceRwf       BigInt                           @map("price_rwf")
+  description    String?                          @db.VarChar(1000)
+  archivedAt     DateTime?                        @map("archived_at") @db.Timestamptz(6)
+  createdAt      DateTime                         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization                     @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_membership_plans_organization_fkey")
+  subscriptions  OrganizationMemberSubscription[]
 
   @@unique([organizationId, normalizedName], map: "organization_membership_plans_org_name_key")
   @@unique([organizationId, id], map: "organization_membership_plans_organization_id_key")
@@ -170,22 +182,82 @@ model OrganizationMembershipPlan {
   @@map("organization_membership_plans")
 }
 
+/// Gym customers, separate from login users and staff organization memberships.
+/// Normalized names and canonical E.164 phone numbers are unique within an organization.
+model OrganizationMember {
+  id             String                           @id(map: "organization_members_pkey") @default(uuid()) @db.Uuid
+  organizationId String                           @map("organization_id") @db.Uuid
+  name           String                           @db.VarChar(160)
+  normalizedName String                           @map("normalized_name") @db.VarChar(160)
+  email          String?                          @db.Citext
+  phoneNumber    String                           @map("phone_number") @db.VarChar(16)
+  archivedAt     DateTime?                        @map("archived_at") @db.Timestamptz(6)
+  createdAt      DateTime                         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime                         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization   Organization                     @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_members_org_fkey")
+  subscriptions  OrganizationMemberSubscription[]
+
+  @@unique([organizationId, normalizedName], map: "organization_members_org_name_key")
+  @@unique([organizationId, phoneNumber], map: "organization_members_org_phone_key")
+  @@unique([organizationId, id], map: "organization_members_org_id_key")
+  @@index([organizationId, archivedAt, createdAt(sort: Desc), id], map: "organization_members_org_archive_created_idx")
+  @@map("organization_members")
+}
+
+/// A dated plan registration, not a provider-confirmed payment. End date is inclusive.
+/// Tenant-composite foreign keys prevent cross-gym member/plan links at the database boundary.
+/// Plan snapshots preserve agreed terms; cancellation retains history. Integrity CHECKs and
+/// a non-overlap trigger must be reviewed in the human-generated migration before deployment.
+model OrganizationMemberSubscription {
+  id                 String                     @id(map: "member_subscriptions_pkey") @default(uuid()) @db.Uuid
+  organizationId     String                     @map("organization_id") @db.Uuid
+  memberId           String                     @map("member_id") @db.Uuid
+  membershipPlanId   String                     @map("membership_plan_id") @db.Uuid
+  planName           String                     @map("plan_name") @db.VarChar(120)
+  priceRwf           BigInt                     @map("price_rwf")
+  periodUnit         MemberPeriodUnit           @map("period_unit")
+  periodCount        Int                        @map("period_count")
+  startDate          DateTime                   @map("start_date") @db.Date
+  endDate            DateTime                   @map("end_date") @db.Date
+  idempotencyKey     String                     @map("idempotency_key") @db.Uuid
+  requestFingerprint String                     @map("request_fingerprint") @db.VarChar(64)
+  createdByUserId    String                     @map("created_by_user_id") @db.Uuid
+  cancelledAt        DateTime?                  @map("cancelled_at") @db.Timestamptz(6)
+  cancelledByUserId  String?                    @map("cancelled_by_user_id") @db.Uuid
+  createdAt          DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization       Organization               @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_org_fkey")
+  member             OrganizationMember         @relation(fields: [organizationId, memberId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_member_fkey")
+  membershipPlan     OrganizationMembershipPlan @relation(fields: [organizationId, membershipPlanId], references: [organizationId, id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_plan_fkey")
+  createdBy          User                       @relation("MemberSubscriptionCreator", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_creator_fkey")
+  cancelledBy        User?                      @relation("MemberSubscriptionCanceller", fields: [cancelledByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "member_subscriptions_canceller_fkey")
+
+  @@unique([organizationId, idempotencyKey], map: "member_subscriptions_org_idempotency_key")
+  @@index([organizationId, memberId, createdAt(sort: Desc), id], map: "member_subscriptions_org_member_created_idx")
+  @@index([organizationId, memberId, cancelledAt, startDate, endDate], map: "member_subscriptions_org_member_dates_idx")
+  @@index([organizationId, membershipPlanId], map: "member_subscriptions_org_plan_idx")
+  @@index([organizationId, endDate, id], map: "member_subscriptions_org_expiry_idx")
+  @@map("organization_member_subscriptions")
+}
+
 /// Global login identity. An account has no platform privileges without an active PlatformStaff
 /// record and permissions obtained through explicit role assignments.
 model User {
-  id                         String                                  @id @default(uuid()) @db.Uuid
-  email                      String                                  @unique(map: "users_email_key") @db.Citext
-  displayName                String                                  @map("display_name") @db.VarChar(160)
-  status                     UserStatus                              @default(PENDING)
-  emailVerifiedAt            DateTime?                               @map("email_verified_at") @db.Timestamptz(6)
-  createdAt                  DateTime                                @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                  DateTime                                @updatedAt @map("updated_at") @db.Timestamptz(6)
-  passwordCredential         PasswordCredential?
-  platformStaff              PlatformStaff?
-  organizationMemberships    OrganizationMembership[]
-  ownerEnrollmentChallenges  OrganizationOwnerEnrollmentChallenge[]
-  ownerAcceptanceAuditEvents OrganizationOwnerAcceptanceAuditEvent[]
-  ownerSessions              OwnerSession[]
+  id                           String                                  @id @default(uuid()) @db.Uuid
+  email                        String                                  @unique(map: "users_email_key") @db.Citext
+  createdMemberSubscriptions   OrganizationMemberSubscription[]        @relation("MemberSubscriptionCreator")
+  cancelledMemberSubscriptions OrganizationMemberSubscription[]        @relation("MemberSubscriptionCanceller")
+  displayName                  String                                  @map("display_name") @db.VarChar(160)
+  status                       UserStatus                              @default(PENDING)
+  emailVerifiedAt              DateTime?                               @map("email_verified_at") @db.Timestamptz(6)
+  createdAt                    DateTime                                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime                                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  passwordCredential           PasswordCredential?
+  platformStaff                PlatformStaff?
+  organizationMemberships      OrganizationMembership[]
+  ownerEnrollmentChallenges    OrganizationOwnerEnrollmentChallenge[]
+  ownerAcceptanceAuditEvents   OrganizationOwnerAcceptanceAuditEvent[]
+  ownerSessions                OwnerSession[]
 
   @@index([status], map: "users_status_idx")
   @@map("users")
