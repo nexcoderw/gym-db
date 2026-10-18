@@ -184,7 +184,14 @@ describe('organization membership plans', () => {
 			prisma.organizationMembershipPlan.create({
 				data: { id, organizationId, ...invalidPlan },
 			}),
-		).rejects.toMatchObject({ code: 'P2004' });
+		).rejects.toMatchObject({
+			code: 'P2039',
+			meta: {
+				driverAdapterError: {
+					cause: { originalCode: '23514' },
+				},
+			},
+		});
 	});
 
 	it('restricts organization deletion while plans exist', async () => {
