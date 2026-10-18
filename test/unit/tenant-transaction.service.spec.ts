@@ -13,8 +13,11 @@ async function createSubject(
 	const transaction = jest.fn(
 		(
 			callback: (client: typeof operationClient) => unknown,
-			_options?: Readonly<{ maxWait: number; timeout: number }>,
-		) => Promise.resolve(callback(operationClient)),
+			options?: Readonly<{ maxWait: number; timeout: number }>,
+		) => {
+			void options;
+			return Promise.resolve(callback(operationClient));
+		},
 	);
 	const module = await Test.createTestingModule({
 		providers: [
