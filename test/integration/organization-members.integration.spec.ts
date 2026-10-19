@@ -5,7 +5,11 @@ import { Test, type TestingModule } from '@nestjs/testing';
 
 import { DatabaseModule } from '../../src/database/database.module.js';
 import { PrismaService } from '../../src/database/prisma.service.js';
-import { MemberPeriodUnit } from '../../src/generated/prisma/client.js';
+import {
+	MemberPeriodUnit,
+	OrganizationMemberReminderChannel,
+	OrganizationMemberReminderKind,
+} from '../../src/generated/prisma/client.js';
 import { OrganizationTestFixtures } from './organization-test-fixtures.js';
 import {
 	assertTestDatabaseWasVerified,
@@ -29,6 +33,7 @@ describe('organization member persistence', () => {
 	let plan: string;
 	const memberIds = new Set<string>();
 	const subscriptionIds = new Set<string>();
+	const reminderIds = new Set<string>();
 	const planIds = new Set<string>();
 	const userIds = new Set<string>();
 
@@ -46,6 +51,10 @@ describe('organization member persistence', () => {
 		prisma = module.get(PrismaService);
 		const safe = await verifyTestDatabaseSafety(prisma, safety);
 		await verifyTestTablePrivileges(prisma, [
+			{
+				tableName: 'organization_member_reminder_deliveries',
+				privileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+			},
 			{ tableName: 'organization_members', privileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] },
 			{
 				tableName: 'organization_member_subscriptions',
@@ -88,6 +97,9 @@ describe('organization member persistence', () => {
 	afterEach(async () => {
 		if (verified === undefined) return;
 		assertTestDatabaseWasVerified(verified);
+		await prisma.organizationMemberReminderDelivery.deleteMany({
+			where: { id: { in: [...reminderIds] } },
+		});
 		await prisma.organizationMemberSubscription.deleteMany({
 			where: { id: { in: [...subscriptionIds] } },
 		});
@@ -95,7 +107,7 @@ describe('organization member persistence', () => {
 		await prisma.organizationMembershipPlan.deleteMany({ where: { id: { in: [...planIds] } } });
 		await prisma.user.deleteMany({ where: { id: { in: [...userIds] } } });
 		await organizations.cleanup(prisma, verified);
-		for (const ids of [subscriptionIds, memberIds, planIds, userIds]) ids.clear();
+		for (const ids of [reminderIds, subscriptionIds, memberIds, planIds, userIds]) ids.clear();
 	});
 
 	afterAll(async () => module?.close());
@@ -159,6 +171,61 @@ describe('organization member persistence', () => {
 		expect(history).toMatchObject({ planName: 'Monthly access', priceRwf: 30_000n });
 		await expect(
 			prisma.organizationMember.delete({ where: { id: member.id } }),
+		).rejects.toMatchObject({ code: 'P2003' });
+	});
+
+	it('deduplicates each reminder occasion without blocking the other occasion', async () => {
+		const member = await createMember(gym);
+		const subscription = await prisma.organizationMemberSubscription.create({
+			data: subscriptionData(gym, member.id, plan),
+		});
+		const first = {
+			id: reserve(reminderIds),
+			organizationId: gym,
+			memberId: member.id,
+			memberSubscriptionId: subscription.id,
+			kind: OrganizationMemberReminderKind.THREE_DAYS_BEFORE,
+			channel: OrganizationMemberReminderChannel.EMAIL,
+			dueDate: new Date('2030-01-28T00:00:00.000Z'),
+			recipientEmail: 'member@example.com',
+			providerIdempotencyKey: randomUUID(),
+		};
+		await prisma.organizationMemberReminderDelivery.create({ data: first });
+		await expect(
+			prisma.organizationMemberReminderDelivery.create({
+				data: { ...first, id: reserve(reminderIds), providerIdempotencyKey: randomUUID() },
+			}),
+		).rejects.toMatchObject({ code: 'P2002' });
+		await prisma.organizationMemberReminderDelivery.create({
+			data: {
+				...first,
+				id: reserve(reminderIds),
+				kind: OrganizationMemberReminderKind.EXPIRY_DAY,
+				providerIdempotencyKey: randomUUID(),
+			},
+		});
+	});
+
+	it('rejects an outbox row linked to another gym subscription', async () => {
+		const member = await createMember(gym);
+		const foreignMember = await createMember(otherGym);
+		const subscription = await prisma.organizationMemberSubscription.create({
+			data: subscriptionData(gym, member.id, plan),
+		});
+		await expect(
+			prisma.organizationMemberReminderDelivery.create({
+				data: {
+					id: reserve(reminderIds),
+					organizationId: otherGym,
+					memberId: foreignMember.id,
+					memberSubscriptionId: subscription.id,
+					kind: OrganizationMemberReminderKind.EXPIRY_DAY,
+					channel: OrganizationMemberReminderChannel.EMAIL,
+					dueDate: new Date('2030-01-31T00:00:00.000Z'),
+					recipientEmail: 'member@example.com',
+					providerIdempotencyKey: randomUUID(),
+				},
+			}),
 		).rejects.toMatchObject({ code: 'P2003' });
 	});
 
