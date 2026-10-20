@@ -11,6 +11,8 @@ describe('organization member reminder storage contract', () => {
 		expect(delivery).toContain('fields: [organizationId, memberId]');
 		expect(delivery).toContain('fields: [organizationId, memberSubscriptionId, memberId]');
 		expect(delivery).toContain('providerIdempotencyKey');
+		expect(delivery).toContain('messageSubject');
+		expect(delivery).toContain('messageBody');
 		expect(delivery).not.toContain('onDelete: Cascade');
 		expect(member).toContain('reminderEmailOptedOutAt');
 		expect(member).toContain('reminderEmailSuppressedAt');
