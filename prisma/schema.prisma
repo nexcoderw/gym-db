@@ -70,6 +70,7 @@ enum OrganizationMemberEmailSuppressionReason {
 enum OrganizationMemberReminderKind {
   THREE_DAYS_BEFORE @map("three_days_before")
   EXPIRY_DAY        @map("expiry_day")
+  MANUAL            @map("manual")
 
   @@map("organization_member_reminder_kind")
 }
