@@ -103,7 +103,7 @@ install -m 600 "$live_repository/.env.production" "$staged_repository/.env.produ
 
 (
 	cd "$staged_repository"
-	npx --yes npm@10.8.2 ci
+	npx --yes npm@10.8.2 ci --include=dev
 	NODE_ENV=production npm run prisma:generate
 	npm run format:check
 	npm run lint
