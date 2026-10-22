@@ -118,10 +118,32 @@ DUMP_PATH="$dump_path" node --env-file="$staged_repository/.env.production" --in
 	const databaseUrl = process.env.DATABASE_URL;
 	const dumpPath = process.env.DUMP_PATH;
 	if (!databaseUrl || !dumpPath) process.exit(2);
+	const target = new URL(databaseUrl);
+	if (!["postgres:", "postgresql:"].includes(target.protocol)) process.exit(2);
+	const databaseName = decodeURIComponent(target.pathname.replace(/^\//u, ""));
+	if (!target.hostname || !target.username || !databaseName) process.exit(2);
+	const pgEnvironment = {
+		...process.env,
+		PGHOST: target.hostname,
+		PGPORT: target.port || "5432",
+		PGUSER: decodeURIComponent(target.username),
+		PGPASSWORD: decodeURIComponent(target.password),
+		PGDATABASE: databaseName,
+	};
+	const connectionOptions = {
+		sslmode: "PGSSLMODE",
+		channel_binding: "PGCHANNELBINDING",
+		connect_timeout: "PGCONNECT_TIMEOUT",
+		application_name: "PGAPPNAME",
+	};
+	for (const [parameter, environmentName] of Object.entries(connectionOptions)) {
+		const value = target.searchParams.get(parameter);
+		if (value) pgEnvironment[environmentName] = value;
+	}
 	const result = spawnSync(
 		"pg_dump",
 		["--format=custom", "--no-owner", "--no-privileges", "--file", dumpPath],
-		{ env: { ...process.env, PGDATABASE: databaseUrl }, stdio: "inherit" },
+		{ env: pgEnvironment, stdio: "inherit" },
 	);
 	process.exit(result.status ?? 1);
 '
