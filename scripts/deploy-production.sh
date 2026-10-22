@@ -29,12 +29,19 @@ release_id="$(date -u +%Y%m%dT%H%M%SZ)-${target_sha:0:12}-$run_reference"
 release_directory="$component_releases/$release_id"
 staged_repository="$release_directory/source"
 rollback_directory="$release_directory/rollback"
+pg_dump_binary="${PG_DUMP_BINARY:-/usr/lib/postgresql/18/bin/pg_dump}"
 old_commit=''
 promotion_complete=0
 
 install -d -m 750 "$component_releases"
 exec 9>"$application_root/.production-deployment.lock"
 flock -w 900 9
+
+if [[ ! -x "$pg_dump_binary" ]]; then
+	echo "PostgreSQL 18 client is required at $pg_dump_binary." >&2
+	echo 'Install postgresql-client-18 from the official PostgreSQL APT repository.' >&2
+	exit 1
+fi
 
 cleanup_release_history() {
 	local candidate
@@ -113,11 +120,13 @@ install -m 600 "$live_repository/.env.production" "$staged_repository/.env.produ
 )
 
 dump_path="$release_directory/pre-migration.dump"
-DUMP_PATH="$dump_path" node --env-file="$staged_repository/.env.production" --input-type=module -e '
+DUMP_PATH="$dump_path" PG_DUMP_BINARY="$pg_dump_binary" \
+	node --env-file="$staged_repository/.env.production" --input-type=module -e '
 	import { spawnSync } from "node:child_process";
 	const databaseUrl = process.env.DATABASE_URL;
 	const dumpPath = process.env.DUMP_PATH;
-	if (!databaseUrl || !dumpPath) process.exit(2);
+	const pgDumpBinary = process.env.PG_DUMP_BINARY;
+	if (!databaseUrl || !dumpPath || !pgDumpBinary) process.exit(2);
 	const target = new URL(databaseUrl);
 	if (!["postgres:", "postgresql:"].includes(target.protocol)) process.exit(2);
 	const databaseName = decodeURIComponent(target.pathname.replace(/^\//u, ""));
@@ -148,7 +157,7 @@ DUMP_PATH="$dump_path" node --env-file="$staged_repository/.env.production" --in
 		pgEnvironment.PGSSLROOTCERT = "system";
 	}
 	const result = spawnSync(
-		"pg_dump",
+		pgDumpBinary,
 		["--format=custom", "--no-owner", "--no-privileges", "--file", dumpPath],
 		{ env: pgEnvironment, stdio: "inherit" },
 	);
