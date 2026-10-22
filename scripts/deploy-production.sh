@@ -140,6 +140,13 @@ DUMP_PATH="$dump_path" node --env-file="$staged_repository/.env.production" --in
 		const value = target.searchParams.get(parameter);
 		if (value) pgEnvironment[environmentName] = value;
 	}
+	const sslMode = target.searchParams.get("sslmode");
+	const sslRootCertificate = target.searchParams.get("sslrootcert");
+	if (sslRootCertificate) {
+		pgEnvironment.PGSSLROOTCERT = sslRootCertificate;
+	} else if (["verify-ca", "verify-full"].includes(sslMode)) {
+		pgEnvironment.PGSSLROOTCERT = "system";
+	}
 	const result = spawnSync(
 		"pg_dump",
 		["--format=custom", "--no-owner", "--no-privileges", "--file", dumpPath],
