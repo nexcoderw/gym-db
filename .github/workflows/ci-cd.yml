@@ -20,7 +20,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      NODE_ENV: production
       DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/gym_ci
     steps:
       - name: Check out source
@@ -33,9 +32,11 @@ jobs:
           cache: npm
 
       - name: Install locked dependencies
-        run: npm ci
+        run: npm ci --include=dev
 
       - name: Generate Prisma client
+        env:
+          NODE_ENV: production
         run: npm run prisma:generate
 
       - name: Check formatting
