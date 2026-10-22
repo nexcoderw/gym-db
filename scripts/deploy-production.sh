@@ -45,21 +45,35 @@ fi
 
 cleanup_release_history() {
 	local candidate
+	local cleanup_status=0
 
 	for candidate in "$component_releases"/*; do
 		[[ -d "$candidate" && "$candidate" != "$release_directory" ]] || continue
-		rm -rf -- "$candidate"
+		if ! rm -rf -- "$candidate"; then
+			echo "Unable to remove previous database release: $candidate" >&2
+			cleanup_status=1
+		fi
 	done
 
 	for candidate in "$releases_root"/*; do
 		[[ -d "$candidate" ]] || continue
 		case "$(basename "$candidate")" in
 			db | api | manager) ;;
-			*) rm -rf -- "$candidate" ;;
+			*)
+				if ! rm -rf -- "$candidate"; then
+					echo "Unable to remove legacy release: $candidate" >&2
+					cleanup_status=1
+				fi
+				;;
 		esac
 	done
 
-	git -C "$live_repository" worktree prune
+	if ! git -C "$live_repository" worktree prune; then
+		echo 'Unable to prune database deployment worktrees.' >&2
+		cleanup_status=1
+	fi
+
+	return "$cleanup_status"
 }
 
 restore_previous_runtime() {
@@ -87,7 +101,9 @@ on_exit() {
 		rm -rf -- "$release_directory"
 		git -C "$live_repository" worktree prune || true
 	elif ((promotion_complete == 1)); then
-		cleanup_release_history
+		if ! cleanup_release_history; then
+			echo 'Database deployment succeeded, but release cleanup needs attention.' >&2
+		fi
 	fi
 
 	return "$status"
