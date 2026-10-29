@@ -6,6 +6,41 @@ It is a package consumed by `gym-api`; it is not a public server and contains no
 
 ## Architecture
 
+### Organization feature entitlement expansion (pending human migration review)
+
+`OrganizationFeatureEntitlement` stores one platform-controlled capability state per organization.
+The composite organization/key identity prevents duplicate states, optional UTC activation windows
+support bounded access, and a positive version supports optimistic concurrency. A missing row means
+denied; entitlement state supplements rather than replaces organization lifecycle, membership and
+manager-permission checks.
+
+`OrganizationFeatureEntitlementAuditEvent` is the append-only history for initial migration,
+organization provisioning and platform-admin changes. It snapshots previous/resulting state, the
+resulting version, a bounded reason and safe request correlation. Platform-admin events require a
+verified platform actor and request ID; migration/provisioning events may omit an actor only under
+the reviewed database constraints. The public `ORGANIZATION_ENTITLEMENT` catalog is the only approved
+key set. Unknown keys must be rejected by API consumers and the database constraint.
+
+From this package, the human runs `npm run prisma:format`, `npm run prisma:validate`, then
+`npm run migration:create -- --name add_organization_feature_entitlements`. Before deployment, amend
+and review the generated create-only SQL so it:
+
+- checks feature keys against the complete reviewed catalog;
+- requires positive entitlement/audit versions and valid `starts_at < expires_at` windows;
+- requires actor/request evidence for `platform_admin` audit events and forbids it for the initial
+  migration source;
+- prevents entitlement key/organization/creation identity changes and makes audit rows append-only;
+- inserts every current catalog key as enabled for every existing organization, with version `1` and
+  one matching `initial_migration` audit row, without changing organization lifecycle state;
+- revokes PUBLIC access and grants only the minimum reviewed runtime privileges; and
+- contains no drop, truncate, cascade-delete or existing-table rewrite.
+
+New organizations must receive the reviewed default rows atomically in the future API provisioning
+workflow. Future capabilities are denied until a reviewed catalog and migration expansion creates
+their rows. Deploy the database expansion and publish an immutable compatible package before the API
+starts reading or enforcing entitlements. A forward recovery may disable API enforcement while
+retaining the additive tables; do not roll back by dropping entitlement or audit evidence.
+
 ### Email verification expansion (pending human migration review)
 
 `PlatformMfaChallenge` now defines nullable email OTP digest/expiry/send timestamps and a send
