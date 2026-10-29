@@ -6,4 +6,9 @@ export {
 	type TenantTransactionCallback,
 } from './database/tenant-transaction.service.js';
 export * from './generated/prisma/client.js';
+export {
+	INITIAL_ORGANIZATION_ENTITLEMENTS,
+	ORGANIZATION_ENTITLEMENT,
+	type OrganizationEntitlementKey,
+} from './types/organization-entitlement.js';
 export type { TenantContext } from './types/tenant-context.js';
