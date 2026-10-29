@@ -44,5 +44,14 @@ describe('public package exports', () => {
 			GRANTED: 'GRANTED',
 			ALREADY_GRANTED: 'ALREADY_GRANTED',
 		});
+		expect(databasePackage.ORGANIZATION_ENTITLEMENT).toMatchObject({
+			membersRead: 'organization.members.read',
+			membersCreate: 'organization.members.create',
+			paymentsRead: 'organization.payments.read',
+			paymentsCreate: 'organization.payments.create',
+		});
+		expect(databasePackage.INITIAL_ORGANIZATION_ENTITLEMENTS).toEqual(
+			Object.values(databasePackage.ORGANIZATION_ENTITLEMENT),
+		);
 	});
 });
