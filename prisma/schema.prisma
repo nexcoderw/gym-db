@@ -191,6 +191,14 @@ enum OrganizationAuditAction {
   @@map("organization_audit_action")
 }
 
+enum OrganizationFeatureEntitlementChangeSource {
+  INITIAL_MIGRATION         @map("initial_migration")
+  ORGANIZATION_PROVISIONING @map("organization_provisioning")
+  PLATFORM_ADMIN            @map("platform_admin")
+
+  @@map("organization_feature_entitlement_change_source")
+}
+
 enum PlatformAuthorizationAuditAction {
   PROVISION_ORGANIZATION_MANAGER @map("provision_organization_manager")
 
@@ -208,15 +216,15 @@ enum PlatformAuthorizationAuditOutcome {
 /// Slug grammar, reserved names and nonblank names require reviewed SQL CHECK constraints.
 /// Lifecycle timestamps record the latest corresponding transition; status remains authoritative.
 model Organization {
-  id                         String                                  @id(map: "organizations_pkey") @default(uuid()) @db.Uuid
-  name                       String                                  @db.VarChar(160)
-  slug                       String                                  @unique(map: "organizations_slug_key") @db.VarChar(63)
-  status                     OrganizationStatus                      @default(PENDING)
-  activatedAt                DateTime?                               @map("activated_at") @db.Timestamptz(6)
-  suspendedAt                DateTime?                               @map("suspended_at") @db.Timestamptz(6)
-  archivedAt                 DateTime?                               @map("archived_at") @db.Timestamptz(6)
-  createdAt                  DateTime                                @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                  DateTime                                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                         String                                     @id(map: "organizations_pkey") @default(uuid()) @db.Uuid
+  name                       String                                     @db.VarChar(160)
+  slug                       String                                     @unique(map: "organizations_slug_key") @db.VarChar(63)
+  status                     OrganizationStatus                         @default(PENDING)
+  activatedAt                DateTime?                                  @map("activated_at") @db.Timestamptz(6)
+  suspendedAt                DateTime?                                  @map("suspended_at") @db.Timestamptz(6)
+  archivedAt                 DateTime?                                  @map("archived_at") @db.Timestamptz(6)
+  createdAt                  DateTime                                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime                                   @updatedAt @map("updated_at") @db.Timestamptz(6)
   auditEvents                OrganizationAuditEvent[]
   memberships                OrganizationMembership[]
   roles                      OrganizationRole[]
@@ -233,9 +241,66 @@ model Organization {
   paymentAllocations         OrganizationPaymentAllocation[]
   paymentRefunds             OrganizationPaymentRefund[]
   paymentAuditEvents         OrganizationPaymentAuditEvent[]
+  featureEntitlements        OrganizationFeatureEntitlement[]
+  featureEntitlementAudits   OrganizationFeatureEntitlementAuditEvent[]
 
   @@index([status, createdAt(sort: Desc), id], map: "organizations_status_created_at_id_idx")
   @@map("organizations")
+}
+
+/// Platform-controlled access to one reviewed capability for one Organization. Missing rows deny
+/// access. The API evaluates enabled state and the optional UTC activation window on every protected
+/// operation; this record never replaces organization membership or manager permissions.
+model OrganizationFeatureEntitlement {
+  organizationId           String                                     @map("organization_id") @db.Uuid
+  featureKey               String                                     @map("feature_key") @db.VarChar(80)
+  enabled                  Boolean                                    @default(false)
+  startsAt                 DateTime?                                  @map("starts_at") @db.Timestamptz(6)
+  expiresAt                DateTime?                                  @map("expires_at") @db.Timestamptz(6)
+  version                  Int                                        @default(1)
+  updatedByPlatformStaffId String?                                    @map("updated_by_platform_staff_id") @db.Uuid
+  createdAt                DateTime                                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime                                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  organization             Organization                               @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_feature_entitlements_organization_fkey")
+  updatedByPlatformStaff   PlatformStaff?                             @relation("OrganizationFeatureEntitlementUpdater", fields: [updatedByPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_feature_entitlements_updater_fkey")
+  auditEvents              OrganizationFeatureEntitlementAuditEvent[]
+
+  @@id([organizationId, featureKey], map: "organization_feature_entitlements_pkey")
+  @@index([organizationId, enabled, startsAt, expiresAt], map: "organization_feature_entitlements_org_effective_idx")
+  @@index([updatedByPlatformStaffId, updatedAt(sort: Desc)], map: "organization_feature_entitlements_updater_time_idx")
+  @@map("organization_feature_entitlements")
+}
+
+/// Append-only evidence for successful entitlement provisioning and platform changes. Nullable
+/// actor/request fields are reserved for migration and system provisioning; PLATFORM_ADMIN events
+/// require both through reviewed PostgreSQL constraints.
+model OrganizationFeatureEntitlementAuditEvent {
+  id                   String                                     @id(map: "organization_feature_entitlement_audit_events_pkey") @default(uuid()) @db.Uuid
+  organizationId       String                                     @map("organization_id") @db.Uuid
+  featureKey           String                                     @map("feature_key") @db.VarChar(80)
+  source               OrganizationFeatureEntitlementChangeSource
+  previousEnabled      Boolean?                                   @map("previous_enabled")
+  resultingEnabled     Boolean                                    @map("resulting_enabled")
+  previousStartsAt     DateTime?                                  @map("previous_starts_at") @db.Timestamptz(6)
+  resultingStartsAt    DateTime?                                  @map("resulting_starts_at") @db.Timestamptz(6)
+  previousExpiresAt    DateTime?                                  @map("previous_expires_at") @db.Timestamptz(6)
+  resultingExpiresAt   DateTime?                                  @map("resulting_expires_at") @db.Timestamptz(6)
+  resultingVersion     Int                                        @map("resulting_version")
+  actorPlatformStaffId String?                                    @map("actor_platform_staff_id") @db.Uuid
+  requestId            String?                                    @map("request_id") @db.VarChar(128)
+  reason               String                                     @db.VarChar(500)
+  occurredAt           DateTime                                   @map("occurred_at") @db.Timestamptz(6)
+  recordedAt           DateTime                                   @default(now()) @map("recorded_at") @db.Timestamptz(6)
+  organization         Organization                               @relation(fields: [organizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_feature_entitlement_audits_organization_fkey")
+  entitlement          OrganizationFeatureEntitlement             @relation(fields: [organizationId, featureKey], references: [organizationId, featureKey], onDelete: Restrict, onUpdate: Restrict, map: "organization_feature_entitlement_audits_entitlement_fkey")
+  actorPlatformStaff   PlatformStaff?                             @relation("OrganizationFeatureEntitlementAuditActor", fields: [actorPlatformStaffId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "organization_feature_entitlement_audits_actor_fkey")
+
+  @@unique([organizationId, featureKey, resultingVersion], map: "organization_feature_entitlement_audits_org_feature_version_key")
+  @@index([organizationId, recordedAt(sort: Desc), id], map: "organization_feature_entitlement_audits_org_time_idx")
+  @@index([organizationId, featureKey, recordedAt(sort: Desc), id], map: "organization_feature_entitlement_audits_org_feature_time_idx")
+  @@index([actorPlatformStaffId, recordedAt(sort: Desc), id], map: "organization_feature_entitlement_audits_actor_time_idx")
+  @@index([requestId], map: "organization_feature_entitlement_audits_request_idx")
+  @@map("organization_feature_entitlement_audit_events")
 }
 
 /// Organization-owned commercial membership offer. Prices are exact whole Rwandan francs;
@@ -753,13 +818,13 @@ model PasswordCredential {
 /// Explicit eligibility for NEXCODE platform administration. Active status alone grants nothing;
 /// authorization also requires effective permissions assigned through PlatformRole.
 model PlatformStaff {
-  id                                 String                                @id @default(uuid()) @db.Uuid
-  userId                             String                                @unique(map: "platform_staff_user_id_key") @map("user_id") @db.Uuid
+  id                                 String                                     @id @default(uuid()) @db.Uuid
+  userId                             String                                     @unique(map: "platform_staff_user_id_key") @map("user_id") @db.Uuid
   status                             PlatformStaffStatus
-  suspendedAt                        DateTime?                             @map("suspended_at") @db.Timestamptz(6)
-  createdAt                          DateTime                              @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                          DateTime                              @updatedAt @map("updated_at") @db.Timestamptz(6)
-  user                               User                                  @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  suspendedAt                        DateTime?                                  @map("suspended_at") @db.Timestamptz(6)
+  createdAt                          DateTime                                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                          DateTime                                   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user                               User                                       @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   roles                              PlatformStaffRole[]
   adminSessions                      PlatformAdminSession[]
   totpCredential                     PlatformTotpCredential?
@@ -770,6 +835,8 @@ model PlatformStaff {
   ownerInvitationsCreated            OrganizationOwnerInvitation[]
   ownerInvitationDeliveriesRequested OrganizationOwnerInvitationDelivery[]
   ownershipAuditEvents               OrganizationOwnershipAuditEvent[]
+  featureEntitlementsUpdated         OrganizationFeatureEntitlement[]           @relation("OrganizationFeatureEntitlementUpdater")
+  featureEntitlementAuditEvents      OrganizationFeatureEntitlementAuditEvent[] @relation("OrganizationFeatureEntitlementAuditActor")
 
   @@index([status], map: "platform_staff_status_idx")
   @@map("platform_staff")
