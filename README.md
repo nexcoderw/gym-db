@@ -6,7 +6,7 @@ It is a package consumed by `gym-api`; it is not a public server and contains no
 
 ## Architecture
 
-### Organization feature entitlement expansion (pending human migration review)
+### Organization feature entitlement expansion
 
 `OrganizationFeatureEntitlement` stores one platform-controlled capability state per organization.
 The composite organization/key identity prevents duplicate states, optional UTC activation windows
@@ -21,9 +21,9 @@ verified platform actor and request ID; migration/provisioning events may omit a
 the reviewed database constraints. The public `ORGANIZATION_ENTITLEMENT` catalog is the only approved
 key set. Unknown keys must be rejected by API consumers and the database constraint.
 
-From this package, the human runs `npm run prisma:format`, `npm run prisma:validate`, then
-`npm run migration:create -- --name add_organization_feature_entitlements`. Before deployment, amend
-and review the generated create-only SQL so it:
+The reviewed additive migration is committed under
+`20261030090000_add_organization_feature_entitlements`. Before deployment, review its SQL and confirm
+that it:
 
 - checks feature keys against the complete reviewed catalog;
 - requires positive entitlement/audit versions and valid `starts_at < expires_at` windows;
@@ -32,14 +32,16 @@ and review the generated create-only SQL so it:
 - prevents entitlement key/organization/creation identity changes and makes audit rows append-only;
 - inserts every current catalog key as enabled for every existing organization, with version `1` and
   one matching `initial_migration` audit row, without changing organization lifecycle state;
-- revokes PUBLIC access and grants only the minimum reviewed runtime privileges; and
+- revokes PUBLIC access; environment owners grant only reviewed runtime privileges separately; and
 - contains no drop, truncate, cascade-delete or existing-table rewrite.
 
-New organizations must receive the reviewed default rows atomically in the future API provisioning
-workflow. Future capabilities are denied until a reviewed catalog and migration expansion creates
-their rows. Deploy the database expansion and publish an immutable compatible package before the API
-starts reading or enforcing entitlements. A forward recovery may disable API enforcement while
-retaining the additive tables; do not roll back by dropping entitlement or audit evidence.
+New organizations must receive reviewed default rows atomically in the future API provisioning
+workflow. Until then, the platform entitlement-management endpoint can provision a missing catalog
+row through an audited version-zero conditional write. Future capabilities are denied until a
+reviewed catalog and migration expansion creates their rows. Deploy the database expansion and
+publish an immutable compatible package before the API starts reading or enforcing entitlements. A
+forward recovery may disable API enforcement while retaining the additive tables; do not roll back
+by dropping entitlement or audit evidence.
 
 ### Email verification expansion (pending human migration review)
 
