@@ -3,9 +3,7 @@ import { readFile } from 'node:fs/promises';
 describe('organization feature entitlement storage contract', () => {
 	it('stores one versioned capability state per organization', async () => {
 		const schema = await readFile(new URL('../../prisma/schema.prisma', import.meta.url), 'utf8');
-		const entitlement = /model OrganizationFeatureEntitlement \{[\s\S]*?\n\}/u.exec(
-			schema,
-		)?.[0];
+		const entitlement = /model OrganizationFeatureEntitlement \{[\s\S]*?\n\}/u.exec(schema)?.[0];
 
 		expect(entitlement).toBeDefined();
 		expect(entitlement).toMatch(/featureKey\s+String[^\n]+VarChar\(80\)/u);
