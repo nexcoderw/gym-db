@@ -284,7 +284,7 @@ model OrganizationFeatureEntitlement {
 /// actor/request fields are reserved for migration and system provisioning; PLATFORM_ADMIN events
 /// require both through reviewed PostgreSQL constraints.
 model OrganizationFeatureEntitlementAuditEvent {
-  id                   String                                     @id(map: "organization_feature_entitlement_audit_events_pkey") @default(uuid()) @db.Uuid
+  id                   String                                     @id(map: "organization_feature_entitlement_audit_events_pkey") @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId       String                                     @map("organization_id") @db.Uuid
   featureKey           String                                     @map("feature_key") @db.VarChar(80)
   source               OrganizationFeatureEntitlementChangeSource
