@@ -347,6 +347,7 @@ model OrganizationMember {
   reminderEmailSuppressedAt      DateTime?                                 @map("reminder_email_suppressed_at") @db.Timestamptz(6)
   reminderEmailSuppressionReason OrganizationMemberEmailSuppressionReason? @map("reminder_email_suppression_reason")
   phoneNumber                    String                                    @map("phone_number") @db.VarChar(16)
+  joinedOn                       DateTime?                                 @map("joined_on") @db.Date
   gender                         OrganizationMemberGender?
   archivedAt                     DateTime?                                 @map("archived_at") @db.Timestamptz(6)
   createdAt                      DateTime                                  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -360,6 +361,7 @@ model OrganizationMember {
   @@unique([organizationId, phoneNumber], map: "organization_members_org_phone_key")
   @@unique([organizationId, id], map: "organization_members_org_id_key")
   @@index([organizationId, archivedAt, createdAt(sort: Desc), id], map: "organization_members_org_archive_created_idx")
+  @@index([organizationId, joinedOn, id], map: "organization_members_org_joined_on_id_idx")
   @@map("organization_members")
 }
 
