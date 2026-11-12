@@ -212,6 +212,15 @@ enum PlatformAuthorizationAuditOutcome {
   @@map("platform_authorization_audit_outcome")
 }
 
+enum OrganizationMemberGender {
+  MALE              @map("male")
+  FEMALE            @map("female")
+  OTHER             @map("other")
+  PREFER_NOT_TO_SAY @map("prefer_not_to_say")
+
+  @@map("organization_member_gender")
+}
+
 /// Platform-managed tenant root, not a tenant-owned child or an authorization grant.
 /// Slug grammar, reserved names and nonblank names require reviewed SQL CHECK constraints.
 /// Lifecycle timestamps record the latest corresponding transition; status remains authoritative.
@@ -338,6 +347,7 @@ model OrganizationMember {
   reminderEmailSuppressedAt      DateTime?                                 @map("reminder_email_suppressed_at") @db.Timestamptz(6)
   reminderEmailSuppressionReason OrganizationMemberEmailSuppressionReason? @map("reminder_email_suppression_reason")
   phoneNumber                    String                                    @map("phone_number") @db.VarChar(16)
+  gender                         OrganizationMemberGender?
   archivedAt                     DateTime?                                 @map("archived_at") @db.Timestamptz(6)
   createdAt                      DateTime                                  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                      DateTime                                  @updatedAt @map("updated_at") @db.Timestamptz(6)
