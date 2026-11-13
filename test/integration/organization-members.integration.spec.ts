@@ -7,9 +7,12 @@ import { DatabaseModule } from '../../src/database/database.module.js';
 import { PrismaService } from '../../src/database/prisma.service.js';
 import {
 	MemberPeriodUnit,
+	OrganizationMemberEmailSuppressionReason,
 	OrganizationMemberReminderChannel,
 	OrganizationMemberReminderKind,
+	OrganizationMemberSmsSuppressionReason,
 } from '../../src/generated/prisma/client.js';
+import type { Prisma } from '../../src/generated/prisma/client.js';
 import { OrganizationTestFixtures } from './organization-test-fixtures.js';
 import {
 	assertTestDatabaseWasVerified,
@@ -136,6 +139,86 @@ describe('organization member persistence', () => {
 				where: { organizationId: gym, email: 'shared@example.com' },
 			}),
 		).toBe(2);
+	});
+
+	it('defaults existing member writes to non-synthetic without SMS suppression', async () => {
+		const member = await createMember(gym);
+		expect(member).toMatchObject({
+			isSynthetic: false,
+			syntheticBatchId: null,
+			reminderSmsSuppressedAt: null,
+			reminderSmsSuppressionReason: null,
+		});
+	});
+
+	it('persists a batch-identified synthetic member with both notification suppressions', async () => {
+		const member = await createMember(gym);
+		const suppressedAt = new Date('2030-01-01T00:00:00.000Z');
+		const updated = await prisma.organizationMember.update({
+			where: { id: member.id },
+			data: {
+				isSynthetic: true,
+				syntheticBatchId: 'kd-gym-historical-members-v1',
+				reminderEmailSuppressedAt: suppressedAt,
+				reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
+				reminderSmsSuppressedAt: suppressedAt,
+				reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
+			},
+		});
+		expect(updated).toMatchObject({
+			isSynthetic: true,
+			syntheticBatchId: 'kd-gym-historical-members-v1',
+			email: null,
+			reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
+			reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
+		});
+	});
+
+	it.each([
+		{ reminderSmsSuppressedAt: new Date('2030-01-01T00:00:00.000Z') },
+		{ reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL },
+		{
+			isSynthetic: true,
+			reminderEmailSuppressedAt: new Date('2030-01-01T00:00:00.000Z'),
+			reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
+			reminderSmsSuppressedAt: new Date('2030-01-01T00:00:00.000Z'),
+			reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
+		},
+		{
+			isSynthetic: true,
+			syntheticBatchId: '   ',
+			reminderEmailSuppressedAt: new Date('2030-01-01T00:00:00.000Z'),
+			reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
+			reminderSmsSuppressedAt: new Date('2030-01-01T00:00:00.000Z'),
+			reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
+		},
+		{
+			isSynthetic: true,
+			syntheticBatchId: 'batch-a',
+			reminderEmailSuppressedAt: new Date('2030-01-01T00:00:00.000Z'),
+			reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
+		},
+		{
+			isSynthetic: true,
+			syntheticBatchId: 'batch-a',
+			reminderSmsSuppressedAt: new Date('2030-01-01T00:00:00.000Z'),
+			reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
+		},
+		{
+			isSynthetic: true,
+			syntheticBatchId: 'batch-a',
+			email: 'synthetic@example.com',
+			reminderEmailSuppressedAt: new Date('2030-01-01T00:00:00.000Z'),
+			reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
+			reminderSmsSuppressedAt: new Date('2030-01-01T00:00:00.000Z'),
+			reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
+		},
+		{ syntheticBatchId: 'batch-a' },
+	] satisfies Prisma.OrganizationMemberUpdateInput[])('enforces synthetic provenance and suppression constraints: %#', async (invalid) => {
+		const member = await createMember(gym);
+		await expect(
+			prisma.organizationMember.update({ where: { id: member.id }, data: invalid }),
+		).rejects.toMatchObject(sqlState('23514'));
 	});
 
 	it('rejects a subscription linking to a member in another gym', async () => {

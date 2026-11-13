@@ -67,6 +67,12 @@ enum OrganizationMemberEmailSuppressionReason {
   @@map("organization_member_email_suppression_reason")
 }
 
+enum OrganizationMemberSmsSuppressionReason {
+  MANUAL @map("manual")
+
+  @@map("organization_member_sms_suppression_reason")
+}
+
 enum OrganizationMemberReminderKind {
   THREE_DAYS_BEFORE @map("three_days_before")
   EXPIRY_DAY        @map("expiry_day")
@@ -337,6 +343,7 @@ model OrganizationMembershipPlan {
 /// Gym customers, separate from login users and staff organization memberships.
 /// Normalized names and canonical E.164 phone numbers are unique within an organization.
 /// Reminder suppression timestamp and reason must be paired by a reviewed SQL CHECK constraint.
+/// Synthetic members require a batch ID, email suppression without an email address, and SMS suppression.
 model OrganizationMember {
   id                             String                                    @id(map: "organization_members_pkey") @default(uuid()) @db.Uuid
   organizationId                 String                                    @map("organization_id") @db.Uuid
@@ -346,9 +353,13 @@ model OrganizationMember {
   reminderEmailOptedOutAt        DateTime?                                 @map("reminder_email_opted_out_at") @db.Timestamptz(6)
   reminderEmailSuppressedAt      DateTime?                                 @map("reminder_email_suppressed_at") @db.Timestamptz(6)
   reminderEmailSuppressionReason OrganizationMemberEmailSuppressionReason? @map("reminder_email_suppression_reason")
+  reminderSmsSuppressedAt        DateTime?                                 @map("reminder_sms_suppressed_at") @db.Timestamptz(6)
+  reminderSmsSuppressionReason   OrganizationMemberSmsSuppressionReason?   @map("reminder_sms_suppression_reason")
   phoneNumber                    String                                    @map("phone_number") @db.VarChar(16)
   joinedOn                       DateTime?                                 @map("joined_on") @db.Date
   gender                         OrganizationMemberGender?
+  isSynthetic                    Boolean                                   @default(false) @map("is_synthetic")
+  syntheticBatchId               String?                                   @map("synthetic_batch_id") @db.VarChar(120)
   archivedAt                     DateTime?                                 @map("archived_at") @db.Timestamptz(6)
   createdAt                      DateTime                                  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt                      DateTime                                  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -362,6 +373,7 @@ model OrganizationMember {
   @@unique([organizationId, id], map: "organization_members_org_id_key")
   @@index([organizationId, archivedAt, createdAt(sort: Desc), id], map: "organization_members_org_archive_created_idx")
   @@index([organizationId, joinedOn, id], map: "organization_members_org_joined_on_id_idx")
+  @@index([organizationId, isSynthetic, syntheticBatchId, id], map: "organization_members_org_synthetic_batch_id_idx")
   @@map("organization_members")
 }
 

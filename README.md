@@ -2630,12 +2630,47 @@ database enforcement of non-overlapping uncancelled registrations. Preserve tena
 keys and indexes; do not weaken existing migrations. The API supplies transaction-local tenant context
 and locks members and plans, but those operations are not substitutes for SQL integrity review.
 
-Runtime provisioning must cover SELECT/INSERT and only mutable member profile/archive columns,
-SELECT/INSERT and cancellation/update timestamps for subscriptions, USAGE on the period enum, and the
-parent locking privileges used by the API. Never copy test-only DELETE grants to the runtime role.
-Review effective inherited/PUBLIC privileges separately. Apply reviewed expansion and grants before
-generating/building the database package and restarting its API consumer. The expansion is additive;
-rollback after registrations exist must preserve customer and registration history.
+### Synthetic member provenance and SMS suppression expansion
+
+`OrganizationMember.isSynthetic` defaults to false so existing and ordinary member writes retain
+their current behavior. Synthetic rows must carry a nonblank `syntheticBatchId`; that value identifies
+the import batch for tenant-scoped audit and controlled cleanup. The new batch index starts with
+`organizationId` and includes `isSynthetic`, `syntheticBatchId`, and `id`. No existing member is
+reclassified or otherwise updated by this schema expansion.
+
+SMS suppression follows the nullable timestamp/reason pair used by email suppression. The initial
+SMS reason enum contains only `manual`, which is the only suppression source justified by the current
+database conventions. Add the type with PUBLIC access revoked and grant only the runtime and migration
+roles that need its use, following the existing enum privilege pattern.
+
+The human-generated migration must include reviewed PostgreSQL CHECK constraints for these invariants:
+
+- SMS suppression timestamp and reason are either both null or both present.
+- A synthetic member has a nonblank batch ID, both SMS suppression fields, both email suppression
+  fields, and a null email address.
+- A non-synthetic member has a null batch ID.
+
+The existing email timestamp/reason pairing check remains in force. These additions are compatible
+with current rows: the non-null `is_synthetic` column defaults to false, batch and SMS fields default
+to null, and no backfill or member update is needed. Review table-lock duration and constraint
+validation against production cardinality; consider adding checks `NOT VALID` and validating them in
+a separately reviewed step if immediate validation would create an unacceptable lock window. Never
+weaken or rewrite an applied migration.
+
+Persisting a suppression flag does not itself suppress delivery. Before using these fields for
+synthetic registrations, every API queueing path and sender must check both suppression channels at
+enqueue and immediately before delivery. This database package change alone does not update those
+consumers or authorize an import.
+
+Runtime provisioning must cover SELECT/INSERT and only mutable member profile/archive, synthetic
+classification/batch and suppression columns; SELECT/INSERT and cancellation/update timestamps for
+subscriptions; USAGE on the period and SMS suppression enums; and the parent locking privileges used
+by the API. Grant the disposable integration role the table DML and enum USAGE needed by the new
+constraint tests. Never copy test-only DELETE grants to the runtime role. Review effective
+inherited/PUBLIC privileges separately. Apply reviewed expansion and grants before generating/building
+the database package and restarting its API consumer. The expansion is additive; rollback after
+synthetic registrations exist must preserve provenance and suppression until records are safely
+removed through an authorized cleanup process.
 
 The new schema and integration tests have not been run. The disposable integration suite verifies its
 independent database marker and table privileges before writes and deletes only tracked fixture IDs.

@@ -6,6 +6,9 @@ describe('organization member reminder storage contract', () => {
 		const delivery = /model OrganizationMemberReminderDelivery \{[\s\S]*?\n\}/u.exec(source)?.[0];
 		const member = /model OrganizationMember \{[\s\S]*?\n\}/u.exec(source)?.[0];
 		const kinds = /enum OrganizationMemberReminderKind \{[\s\S]*?\n\}/u.exec(source)?.[0];
+		const smsSuppression = /enum OrganizationMemberSmsSuppressionReason \{[\s\S]*?\n\}/u.exec(
+			source,
+		)?.[0];
 
 		expect(delivery).toContain('@@unique([organizationId, memberSubscriptionId, kind, channel]');
 		expect(delivery).toContain('fields: [organizationId, memberId]');
@@ -17,6 +20,9 @@ describe('organization member reminder storage contract', () => {
 		expect(member).toContain('reminderEmailOptedOutAt');
 		expect(member).toContain('reminderEmailSuppressedAt');
 		expect(member).toContain('reminderEmailSuppressionReason');
+		expect(member).toContain('reminderSmsSuppressedAt');
+		expect(member).toContain('reminderSmsSuppressionReason');
 		expect(kinds).toContain('MANUAL            @map("manual")');
+		expect(smsSuppression).toContain('MANUAL @map("manual")');
 	});
 });
