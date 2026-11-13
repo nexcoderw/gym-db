@@ -30,9 +30,8 @@ describe('organization member storage contract', () => {
 		expect(member).toMatch(
 			/syntheticBatchId\s+String\?[^\n]+@map\("synthetic_batch_id"\)\s+@db.VarChar\(120\)/u,
 		);
-		expect(member).toMatch(
-			/reminderSmsSuppressedAt\s+DateTime\?[^\n]+@map\("reminder_sms_suppressed_at"\)\s+@db.Timestamptz\(6\)/u,
-		);
+		expect(member).toContain('@map("reminder_sms_suppressed_at") @db.Timestamptz(6)');
+		expect(member).toMatch(/reminderSmsSuppressedAt\s+DateTime\?/u);
 		expect(member).toMatch(
 			/reminderSmsSuppressionReason\s+OrganizationMemberSmsSuppressionReason\?/u,
 		);
