@@ -151,31 +151,28 @@ describe('organization member persistence', () => {
 		});
 	});
 
-	it(
-		'persists a batch-identified synthetic member with both notification suppressions',
-		async () => {
-			const member = await createMember(gym);
-			const suppressedAt = new Date('2030-01-01T00:00:00.000Z');
-			const updated = await prisma.organizationMember.update({
-				where: { id: member.id },
-				data: {
-					isSynthetic: true,
-					syntheticBatchId: 'kd-gym-historical-members-v1',
-					reminderEmailSuppressedAt: suppressedAt,
-					reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
-					reminderSmsSuppressedAt: suppressedAt,
-					reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
-				},
-			});
-			expect(updated).toMatchObject({
+	it('persists a batch-identified synthetic member with both notification suppressions', async () => {
+		const member = await createMember(gym);
+		const suppressedAt = new Date('2030-01-01T00:00:00.000Z');
+		const updated = await prisma.organizationMember.update({
+			where: { id: member.id },
+			data: {
 				isSynthetic: true,
 				syntheticBatchId: 'kd-gym-historical-members-v1',
-				email: null,
+				reminderEmailSuppressedAt: suppressedAt,
 				reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
+				reminderSmsSuppressedAt: suppressedAt,
 				reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
-			});
-		},
-	);
+			},
+		});
+		expect(updated).toMatchObject({
+			isSynthetic: true,
+			syntheticBatchId: 'kd-gym-historical-members-v1',
+			email: null,
+			reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
+			reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
+		});
+	});
 
 	it.each([
 		{ reminderSmsSuppressedAt: new Date('2030-01-01T00:00:00.000Z') },

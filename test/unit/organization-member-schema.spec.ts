@@ -24,9 +24,7 @@ describe('organization member storage contract', () => {
 		expect(subscription).toMatch(/startDate\s+DateTime[^\n]+@db.Date/u);
 		expect(subscription).toMatch(/endDate\s+DateTime[^\n]+@db.Date/u);
 		expect(subscription).not.toContain('onDelete: Cascade');
-		expect(member).toMatch(
-			/isSynthetic\s+Boolean\s+@default\(false\)\s+@map\("is_synthetic"\)/u,
-		);
+		expect(member).toMatch(/isSynthetic\s+Boolean\s+@default\(false\)\s+@map\("is_synthetic"\)/u);
 		expect(member).toMatch(
 			/syntheticBatchId\s+String\?[^\n]+@map\("synthetic_batch_id"\)\s+@db.VarChar\(120\)/u,
 		);
