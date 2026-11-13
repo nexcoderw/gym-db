@@ -151,28 +151,31 @@ describe('organization member persistence', () => {
 		});
 	});
 
-	it('persists a batch-identified synthetic member with both notification suppressions', async () => {
-		const member = await createMember(gym);
-		const suppressedAt = new Date('2030-01-01T00:00:00.000Z');
-		const updated = await prisma.organizationMember.update({
-			where: { id: member.id },
-			data: {
+	it(
+		'persists a batch-identified synthetic member with both notification suppressions',
+		async () => {
+			const member = await createMember(gym);
+			const suppressedAt = new Date('2030-01-01T00:00:00.000Z');
+			const updated = await prisma.organizationMember.update({
+				where: { id: member.id },
+				data: {
+					isSynthetic: true,
+					syntheticBatchId: 'kd-gym-historical-members-v1',
+					reminderEmailSuppressedAt: suppressedAt,
+					reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
+					reminderSmsSuppressedAt: suppressedAt,
+					reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
+				},
+			});
+			expect(updated).toMatchObject({
 				isSynthetic: true,
 				syntheticBatchId: 'kd-gym-historical-members-v1',
-				reminderEmailSuppressedAt: suppressedAt,
+				email: null,
 				reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
-				reminderSmsSuppressedAt: suppressedAt,
 				reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
-			},
-		});
-		expect(updated).toMatchObject({
-			isSynthetic: true,
-			syntheticBatchId: 'kd-gym-historical-members-v1',
-			email: null,
-			reminderEmailSuppressionReason: OrganizationMemberEmailSuppressionReason.MANUAL,
-			reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
-		});
-	});
+			});
+		},
+	);
 
 	it.each([
 		{ reminderSmsSuppressedAt: new Date('2030-01-01T00:00:00.000Z') },
@@ -214,12 +217,15 @@ describe('organization member persistence', () => {
 			reminderSmsSuppressionReason: OrganizationMemberSmsSuppressionReason.MANUAL,
 		},
 		{ syntheticBatchId: 'batch-a' },
-	] satisfies Prisma.OrganizationMemberUpdateInput[])('enforces synthetic provenance and suppression constraints: %#', async (invalid) => {
-		const member = await createMember(gym);
-		await expect(
-			prisma.organizationMember.update({ where: { id: member.id }, data: invalid }),
-		).rejects.toMatchObject(sqlState('23514'));
-	});
+	] satisfies Prisma.OrganizationMemberUpdateInput[])(
+		'enforces synthetic provenance and suppression constraints: %#',
+		async (invalid) => {
+			const member = await createMember(gym);
+			await expect(
+				prisma.organizationMember.update({ where: { id: member.id }, data: invalid }),
+			).rejects.toMatchObject(sqlState('23514'));
+		},
+	);
 
 	it('rejects a subscription linking to a member in another gym', async () => {
 		const foreignMember = await createMember(otherGym);
